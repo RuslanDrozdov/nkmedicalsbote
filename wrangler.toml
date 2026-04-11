@@ -1,0 +1,15 @@
+name = "telegram-survey-bot"
+main = "src/worker.js"
+compatibility_date = "2024-11-01"
+
+# 1) Секреты: wrangler secret put BOT_TOKEN
+#    Опционально: wrangler secret put WEBHOOK_SECRET (случайная строка; тот же в setWebhook)
+# 2) Схема D1 (удалённо): npm run db:init:remote
+# 3) Деплой: npm run deploy
+# 4) Webhook: WEBHOOK_URL=https://<worker>/webhook npm run webhook:set
+# Локально: скопируйте .env в .dev.vars (BOT_TOKEN, опц. WEBHOOK_SECRET), затем npm run db:init:local
+
+[[d1_databases]]
+binding = "DB"
+database_name = "telegram_bot_db"
+database_id = "5eb1bb9b-9d6a-47f7-9515-80459494e1ec"
