@@ -269,10 +269,44 @@ export default {
       }
     }
 
+    const rawBody = await request.text();
+    let updateId;
+    try {
+      const parsed = JSON.parse(rawBody);
+      if (typeof parsed?.update_id === "number") updateId = parsed.update_id;
+    } catch {
+      /* не JSON — отдадим в grammY как есть */
+    }
+
+    if (env.DB && updateId !== undefined) {
+      const now = Math.floor(Date.now() / 1000);
+      try {
+        const ins = await env.DB.prepare(
+          `INSERT OR IGNORE INTO processed_updates (update_id, created_at) VALUES (?, ?)`,
+        )
+          .bind(updateId, now)
+          .run();
+        if (ins.meta.changes === 0) {
+          return new Response("ok", { status: 200 });
+        }
+        if (Math.random() < 0.02) {
+          await env.DB.prepare(`DELETE FROM processed_updates WHERE created_at < ?`).bind(now - 604800).run();
+        }
+      } catch (e) {
+        console.error("processed_updates:", e);
+      }
+    }
+
+    const replay = new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: rawBody,
+    });
+
     try {
       return await webhookCallback(cachedBot, "std/http", {
         timeoutMilliseconds: 55_000,
-      })(request);
+      })(replay);
     } catch (e) {
       console.error("webhook handler:", e);
       return new Response("Internal error", { status: 500 });
