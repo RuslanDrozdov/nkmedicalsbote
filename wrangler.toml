@@ -1,5 +1,5 @@
 name = "telegram-survey-bot"
-main = "src/worker.js"
+main = "worker.js"
 compatibility_date = "2024-11-01"
 
 # 1) Секреты: wrangler secret put BOT_TOKEN
@@ -7,7 +7,8 @@ compatibility_date = "2024-11-01"
 # 2) Схема D1 (удалённо): npm run db:init:remote
 # 3) Деплой: npm run deploy
 # 4) Webhook: WEBHOOK_URL=https://<worker>/webhook npm run webhook:set
-# Локально: скопируйте .env в .dev.vars (BOT_TOKEN, опц. WEBHOOK_SECRET), затем npm run db:init:local
+# Локально: .dev.vars (BOT_TOKEN, опц. WEBHOOK_SECRET), затем npm run db:init:local
+# Точка входа Worker: worker.js (в корне рядом с wrangler.toml — так надёжнее для CI)
 
 [[d1_databases]]
 binding = "DB"

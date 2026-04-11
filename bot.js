@@ -4,7 +4,7 @@ import {
   SCREENING_QUESTIONS,
   FOLLOW_UP_QUESTIONS,
   REQUIRE_BOTH_YES,
-} from "./src/constants.js";
+} from "./constants.js";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
