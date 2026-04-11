@@ -18,14 +18,20 @@ function yesNoKeyboard() {
  * @param {number} userId
  */
 async function loadSession(db, userId) {
-  const row = await db
-    .prepare("SELECT state FROM sessions WHERE user_id = ?")
-    .bind(userId)
-    .first();
-  if (!row?.state) return defaultSession();
+  if (!db) return defaultSession();
   try {
-    return JSON.parse(String(row.state));
-  } catch {
+    const row = await db
+      .prepare("SELECT state FROM sessions WHERE user_id = ?")
+      .bind(userId)
+      .first();
+    if (!row?.state) return defaultSession();
+    try {
+      return JSON.parse(String(row.state));
+    } catch {
+      return defaultSession();
+    }
+  } catch (e) {
+    console.error("loadSession:", e);
     return defaultSession();
   }
 }
@@ -36,15 +42,20 @@ async function loadSession(db, userId) {
  * @param {object} state
  */
 async function saveSession(db, userId, state) {
+  if (!db) return;
   const now = Math.floor(Date.now() / 1000);
-  await db
-    .prepare(
-      `INSERT INTO sessions (user_id, state, updated_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
-    )
-    .bind(userId, JSON.stringify(state), now)
-    .run();
+  try {
+    await db
+      .prepare(
+        `INSERT INTO sessions (user_id, state, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
+      )
+      .bind(userId, JSON.stringify(state), now)
+      .run();
+  } catch (e) {
+    console.error("saveSession:", e);
+  }
 }
 
 /**
@@ -53,13 +64,26 @@ async function saveSession(db, userId, state) {
 function createBot(env) {
   const bot = new Bot(env.BOT_TOKEN);
 
+  // bot.catch() при webhook не используется grammY — ловим ошибки здесь
+  bot.use(async (ctx, next) => {
+    try {
+      await next();
+    } catch (err) {
+      console.error("update error:", err);
+      try {
+        await ctx.reply("Произошла ошибка. Попробуйте снова: /start");
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  });
+
   bot.use(async (ctx, next) => {
     const uid = ctx.from?.id;
     if (uid === undefined) return next();
-    const session = await loadSession(env.DB, uid);
-    ctx.session = session;
+    ctx.session = await loadSession(env.DB, uid);
     await next();
-    await saveSession(env.DB, uid, ctx.session);
+    if (ctx.session) await saveSession(env.DB, uid, ctx.session);
   });
 
   bot.command("start", async (ctx) => {
@@ -76,7 +100,7 @@ function createBot(env) {
   });
 
   bot.callbackQuery(/^(ans:yes|ans:no)$/, async (ctx) => {
-    const s = ctx.session;
+    const s = ctx.session ?? defaultSession();
     const data = ctx.callbackQuery.data;
     const yes = data === "ans:yes";
 
@@ -123,7 +147,7 @@ function createBot(env) {
     const text = ctx.message.text;
     if (text.startsWith("/")) return;
 
-    const s = ctx.session;
+    const s = ctx.session ?? defaultSession();
 
     if (s.phase !== "followup" || s.followUpIndex === undefined || !s.answers) {
       await ctx.reply("Чтобы начать опрос, отправьте /start");
@@ -166,18 +190,70 @@ export default {
    */
   async fetch(request, env) {
     const url = new URL(request.url);
+    const path =
+      url.pathname.length > 1 && url.pathname.endsWith("/")
+        ? url.pathname.slice(0, -1)
+        : url.pathname;
 
-    if (url.pathname === "/health") {
+    if (path === "/health") {
       return new Response("ok", { status: 200 });
     }
 
-    if (url.pathname !== "/webhook" || request.method !== "POST") {
+    if (path === "/" || path === "") {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          service: "telegram-survey-bot",
+          endpoints: {
+            status: "/status",
+            health: "/health",
+            webhook_post: "/webhook",
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        },
+      );
+    }
+
+    if (path === "/status") {
+      const configured = Boolean(env.BOT_TOKEN && String(env.BOT_TOKEN).trim());
+      const secretTrim = typeof env.WEBHOOK_SECRET === "string" ? env.WEBHOOK_SECRET.trim() : "";
+      const body = JSON.stringify({
+        ok: true,
+        bot_token_configured: configured,
+        d1_bound: Boolean(env.DB),
+        webhook_secret_enforced: secretTrim.length > 0,
+        hint: !configured
+          ? "Добавьте BOT_TOKEN: wrangler secret put BOT_TOKEN"
+          : secretTrim.length > 0
+            ? "При setWebhook нужен тот же secret_token, что в WEBHOOK_SECRET"
+            : "webhook URL должен заканчиваться на /webhook",
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    if (path !== "/webhook" || request.method !== "POST") {
       return new Response("Not found", { status: 404 });
     }
 
-    if (env.WEBHOOK_SECRET) {
+    if (!env.BOT_TOKEN || !String(env.BOT_TOKEN).trim()) {
+      console.error("BOT_TOKEN не задан в секретах Worker");
+      return new Response("BOT_TOKEN missing", { status: 503 });
+    }
+
+    const secretExpected =
+      typeof env.WEBHOOK_SECRET === "string" ? env.WEBHOOK_SECRET.trim() : "";
+    if (secretExpected.length > 0) {
       const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-      if (secret !== env.WEBHOOK_SECRET) {
+      if (secret !== secretExpected) {
+        console.error(
+          "WEBHOOK_SECRET: заголовок от Telegram не совпал. Уберите секрет или задайте тот же secret_token в setWebhook.",
+        );
         return new Response("Unauthorized", { status: 401 });
       }
     }
@@ -185,8 +261,21 @@ export default {
     if (!cachedBot || cachedToken !== env.BOT_TOKEN) {
       cachedBot = createBot(env);
       cachedToken = env.BOT_TOKEN;
+      try {
+        await cachedBot.init();
+      } catch (e) {
+        console.error("bot.init (проверьте BOT_TOKEN и доступ к api.telegram.org):", e);
+        return new Response("Bot init failed", { status: 503 });
+      }
     }
 
-    return webhookCallback(cachedBot, "std/http")(request);
+    try {
+      return await webhookCallback(cachedBot, "std/http", {
+        timeoutMilliseconds: 55_000,
+      })(request);
+    } catch (e) {
+      console.error("webhook handler:", e);
+      return new Response("Internal error", { status: 500 });
+    }
   },
 };
