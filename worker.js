@@ -270,6 +270,15 @@ export default {
       });
     }
 
+    if (path === "/webhook" && request.method === "GET") {
+      return new Response(
+        "Этот адрес для Telegram: сюда должен приходить только POST с update.\n" +
+          "В браузере откройте /health (должно быть ok) или корень / для подсказки.\n" +
+          "Webhook в Bot API: setWebhook с URL …/webhook — браузером проверять не нужно.",
+        { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
+      );
+    }
+
     if (path !== "/webhook" || request.method !== "POST") {
       return new Response("Not found", { status: 404 });
     }
