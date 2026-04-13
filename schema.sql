@@ -16,3 +16,15 @@ CREATE TABLE IF NOT EXISTS processed_updates (
 );
 
 CREATE INDEX IF NOT EXISTS idx_processed_updates_created ON processed_updates (created_at);
+
+-- Завершённые опросы: ответы только здесь (сессию после отправки можно не держать с массивом ответов)
+CREATE TABLE IF NOT EXISTS survey_responses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  completed_at INTEGER NOT NULL,
+  answers_json TEXT NOT NULL,
+  screening_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_survey_responses_user ON survey_responses (user_id);
+CREATE INDEX IF NOT EXISTS idx_survey_responses_completed ON survey_responses (completed_at);

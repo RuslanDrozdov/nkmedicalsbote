@@ -79,6 +79,11 @@ function createBot(env) {
   });
 
   bot.use(async (ctx, next) => {
+    ctx.db = env.DB;
+    await next();
+  });
+
+  bot.use(async (ctx, next) => {
     const uid = ctx.from?.id;
     if (uid === undefined) return next();
     ctx.session = await loadSession(env.DB, uid);
@@ -164,11 +169,39 @@ function createBot(env) {
     const next = s.followUpIndex + 1;
 
     if (next >= FOLLOW_UP_QUESTIONS.length) {
+      const answersSnapshot = [...s.answers];
+      const screeningSnapshot = s.screening ? [...s.screening] : null;
+      const uid = ctx.from?.id;
+
+      if (ctx.db && uid !== undefined) {
+        try {
+          const now = Math.floor(Date.now() / 1000);
+          await ctx.db
+            .prepare(
+              `INSERT INTO survey_responses (user_id, completed_at, answers_json, screening_json)
+               VALUES (?, ?, ?, ?)`,
+            )
+            .bind(
+              uid,
+              now,
+              JSON.stringify(answersSnapshot),
+              screeningSnapshot ? JSON.stringify(screeningSnapshot) : null,
+            )
+            .run();
+        } catch (e) {
+          console.error("survey_responses INSERT:", e);
+        }
+      }
+
       s.phase = "done";
+      delete s.followUpIndex;
+      delete s.answers;
+      delete s.screening;
+
       await ctx.reply(
         "Спасибо! Вы ответили на все вопросы.\n\n" +
           "Ваши ответы на блок из 9 вопросов:\n\n" +
-          s.answers.map((a, i) => `${i + 1}. ${a}`).join("\n"),
+          answersSnapshot.map((a, i) => `${i + 1}. ${a}`).join("\n"),
       );
       return;
     }
