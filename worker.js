@@ -88,7 +88,7 @@ function fmtReminderRow(row) {
   const time = String(row?.time_hhmm ?? "09:00");
   const tz = String(row?.timezone ?? "UTC");
   return (
-    `Напоминание: ${enabled ? "включено" : "выключено"}\n` +
+    `Приглашение на опрос: ${enabled ? "включено" : "выключено"}\n` +
     `Время: ${time}\n` +
     `Часовой пояс: ${tz}\n\n` +
     `Нажмите кнопки ниже или отправьте время в формате HH:MM после выбора «Время».`
@@ -160,7 +160,14 @@ async function sendTelegramMessage(env, chatId, text) {
       disable_web_page_preview: true,
     }),
   });
-  return resp.ok;
+  if (resp.ok) return true;
+  try {
+    const body = await resp.text();
+    console.error("sendMessage failed:", resp.status, body);
+  } catch (e) {
+    console.error("sendMessage failed:", resp.status, e);
+  }
+  return false;
 }
 
 /**
@@ -344,7 +351,7 @@ function createBot(env) {
       const ok = await sendTelegramMessage(
         env,
         uid,
-        "Тестовое напоминание. Если вы это видите — отправка работает.",
+        "Тестовое приглашение на опрос.\n\nПожалуйста, пройдите опрос — отправьте /start",
       );
       await ctx.answerCallbackQuery({ text: ok ? "Отправлено" : "Не удалось отправить" });
       return;
@@ -679,8 +686,9 @@ export default {
       const ok = await sendTelegramMessage(
         env,
         uid,
-        `Напоминание по расписанию (${desired} ${tz}). Если хотите изменить — /reminder`,
+        `Пора пройти опрос (${desired} ${tz}).\n\nПожалуйста, начните опрос — отправьте /start\n\nНастройки времени: /reminder`,
       );
+      console.log("scheduled invite:", { uid, tz, desired, ok });
       if (!ok) continue;
 
       try {
