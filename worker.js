@@ -2,7 +2,6 @@ import { Bot, webhookCallback, InlineKeyboard } from "grammy";
 import {
   SCREENING_QUESTIONS,
   FOLLOW_UP_QUESTIONS,
-  REQUIRE_BOTH_YES,
 } from "./constants.js";
 
 function defaultSession() {
@@ -248,17 +247,82 @@ function createBot(env) {
     if (ctx.session) await saveSession(env.DB, uid, ctx.session);
   });
 
+  // Дополнительная идемпотентность на уровне пользователя (переживает рестарты изолята):
+  // Telegram может повторно доставить update (обычно тот же update_id). Игнорируем апдейты
+  // с update_id <= lastUpdateId для конкретного пользователя.
+  bot.use(async (ctx, next) => {
+    const uid = ctx.from?.id;
+    const updateId = ctx.update?.update_id;
+    if (uid === undefined || typeof updateId !== "number") return next();
+    ctx.session = ctx.session ?? defaultSession();
+    const last = Number(ctx.session.lastUpdateId ?? 0);
+    if (last && updateId <= last) return;
+    ctx.session.lastUpdateId = updateId;
+    return next();
+  });
+
+  // Дедуп по сущностям Telegram, если update_id отличается, но событие то же:
+  // - message_id для текстовых сообщений
+  // - callback_query.id для нажатий кнопок
+  bot.use(async (ctx, next) => {
+    const uid = ctx.from?.id;
+    if (uid === undefined) return next();
+    ctx.session = ctx.session ?? defaultSession();
+
+    const msgId = ctx.message?.message_id;
+    if (typeof msgId === "number") {
+      const lastMsgId = Number(ctx.session.lastMessageId ?? 0);
+      if (lastMsgId === msgId) {
+        console.log("ignored duplicate message_id:", { uid, msgId, updateId: ctx.update?.update_id });
+        return;
+      }
+      ctx.session.lastMessageId = msgId;
+    }
+
+    const cbqId = ctx.callbackQuery?.id;
+    if (typeof cbqId === "string" && cbqId) {
+      const lastCbqId = String(ctx.session.lastCallbackQueryId ?? "");
+      if (lastCbqId === cbqId) {
+        console.log("ignored duplicate callback_query.id:", {
+          uid,
+          cbqId,
+          data: ctx.callbackQuery?.data,
+          updateId: ctx.update?.update_id,
+        });
+        return;
+      }
+      ctx.session.lastCallbackQueryId = cbqId;
+    }
+
+    return next();
+  });
+
   bot.command("start", async (ctx) => {
+    // Важно: не затирать поля дедупликации, иначе при ретраях Telegram получим дубль.
+    const prev = ctx.session ?? defaultSession();
     ctx.session = {
       phase: "screening",
+      // screening[0] — ответ «Да/Нет» на первый вопрос
+      // screening[1] — текстовый ответ на второй вопрос
       screening: [null, null],
+      awaitingScreeningText2: false,
+      lastUpdateId: ctx.update?.update_id ?? prev.lastUpdateId ?? undefined,
+      lastMessageId: prev.lastMessageId,
+      lastCallbackQueryId: prev.lastCallbackQueryId,
     };
     await ctx.reply(SCREENING_QUESTIONS[0], { reply_markup: yesNoKeyboard() });
     await ctx.reply("Настройки:", { reply_markup: reminderOpenKeyboard() });
   });
 
   bot.command("cancel", async (ctx) => {
-    ctx.session = defaultSession();
+    // Сохраняем дедуп-поля при сбросе.
+    const prev = ctx.session ?? defaultSession();
+    ctx.session = {
+      ...defaultSession(),
+      lastUpdateId: prev.lastUpdateId,
+      lastMessageId: prev.lastMessageId,
+      lastCallbackQueryId: prev.lastCallbackQueryId,
+    };
     await ctx.reply("Опрос отменён. Отправьте /start чтобы начать снова.");
   });
 
@@ -402,21 +466,15 @@ function createBot(env) {
         delete s.followUpIndex;
         delete s.answers;
         delete s.screening;
+        delete s.awaitingScreeningText2;
         return;
       }
-      await ctx.reply(SCREENING_QUESTIONS[1], { reply_markup: yesNoKeyboard() });
+      s.awaitingScreeningText2 = true;
+      await ctx.reply(SCREENING_QUESTIONS[1]);
       return;
     }
 
-    if (s.screening[1] === null) {
-      s.screening[1] = yes;
-      await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
-
-      s.phase = "followup";
-      s.followUpIndex = 0;
-      s.answers = [];
-      await ctx.reply(FOLLOW_UP_QUESTIONS[0]);
-    }
+    // второй вопрос больше не через кнопки (теперь текст)
   });
 
   bot.on("message:text", async (ctx) => {
@@ -424,6 +482,22 @@ function createBot(env) {
     if (text.startsWith("/")) return;
 
     const s = ctx.session ?? defaultSession();
+
+    if (s.phase === "screening" && s.awaitingScreeningText2 && s.screening?.[0] === true) {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        await ctx.reply("Пожалуйста, отправьте непустой ответ.");
+        return;
+      }
+      s.screening[1] = trimmed;
+      s.awaitingScreeningText2 = false;
+
+      s.phase = "followup";
+      s.followUpIndex = 0;
+      s.answers = [];
+      await ctx.reply(FOLLOW_UP_QUESTIONS[0]);
+      return;
+    }
 
     if (s.reminderAwaitingTime && s.phase !== "followup") {
       if (!ctx.db) {
@@ -489,6 +563,7 @@ function createBot(env) {
       delete s.followUpIndex;
       delete s.answers;
       delete s.screening;
+      delete s.awaitingScreeningText2;
 
       await ctx.reply(
         "Спасибо! Вы ответили на все вопросы.\n\n" +
@@ -507,6 +582,12 @@ function createBot(env) {
 
 let cachedBot = null;
 let cachedToken = "";
+
+// Fallback идемпотентность без D1: небольшой LRU по update_id в памяти изолята.
+// Не даёт 100% гарантию (изолят может пересоздаваться), но убирает типичные дубли при ретраях.
+const RECENT_UPDATE_IDS_MAX = 5000;
+/** @type {Map<number, number>} */
+const recentUpdateIds = new Map();
 
 export default {
   /**
@@ -592,17 +673,8 @@ export default {
       }
     }
 
-    if (!cachedBot || cachedToken !== env.BOT_TOKEN) {
-      cachedBot = createBot(env);
-      cachedToken = env.BOT_TOKEN;
-      try {
-        await cachedBot.init();
-      } catch (e) {
-        console.error("bot.init (проверьте BOT_TOKEN и доступ к api.telegram.org):", e);
-        return new Response("Bot init failed", { status: 503 });
-      }
-    }
-
+    // Читаем body и делаем идемпотентность как можно раньше:
+    // на cold start `bot.init()` может занять время, и Telegram успевает ретраить тот же update_id.
     const rawBody = await request.text();
     let updateId;
     try {
@@ -610,6 +682,17 @@ export default {
       if (typeof parsed?.update_id === "number") updateId = parsed.update_id;
     } catch {
       /* не JSON — отдадим в grammY как есть */
+    }
+
+    if (updateId !== undefined) {
+      if (recentUpdateIds.has(updateId)) {
+        return new Response("ok", { status: 200 });
+      }
+      recentUpdateIds.set(updateId, Date.now());
+      if (recentUpdateIds.size > RECENT_UPDATE_IDS_MAX) {
+        const oldestKey = recentUpdateIds.keys().next().value;
+        if (oldestKey !== undefined) recentUpdateIds.delete(oldestKey);
+      }
     }
 
     if (env.DB && updateId !== undefined) {
@@ -628,6 +711,17 @@ export default {
         }
       } catch (e) {
         console.error("processed_updates:", e);
+      }
+    }
+
+    if (!cachedBot || cachedToken !== env.BOT_TOKEN) {
+      cachedBot = createBot(env);
+      cachedToken = env.BOT_TOKEN;
+      try {
+        await cachedBot.init();
+      } catch (e) {
+        console.error("bot.init (проверьте BOT_TOKEN и доступ к api.telegram.org):", e);
+        return new Response("Bot init failed", { status: 503 });
       }
     }
 

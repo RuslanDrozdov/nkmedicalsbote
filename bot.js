@@ -50,12 +50,32 @@ bot.catch((err, ctx) => {
   }
 });
 
+// Защита от дублей: Telegram/сеть могут повторно доставить update_id.
+// Для long polling это бывает при рестартах/таймаутах. Храним небольшой LRU в памяти процесса.
+const RECENT_UPDATE_IDS_MAX = 2000;
+/** @type {Map<number, number>} */
+const recentUpdateIds = new Map();
+bot.use(async (ctx, next) => {
+  const updateId = ctx?.update?.update_id;
+  if (typeof updateId === "number") {
+    if (recentUpdateIds.has(updateId)) return;
+    recentUpdateIds.set(updateId, Date.now());
+    if (recentUpdateIds.size > RECENT_UPDATE_IDS_MAX) {
+      const oldestKey = recentUpdateIds.keys().next().value;
+      if (oldestKey !== undefined) recentUpdateIds.delete(oldestKey);
+    }
+  }
+  return next();
+});
+
 bot.start(async (ctx) => {
   const userId = ctx.from.id;
   resetSession(userId);
   const s = getSession(userId);
   s.phase = "screening";
+  // screening: первый вопрос — yes/no, второй — текст
   s.screening = null;
+  s.awaitingScreeningText2 = false;
   await ctx.reply(SCREENING_QUESTIONS[0], yesNoKeyboard());
 });
 
@@ -95,10 +115,9 @@ bot.on("callback_query", async (ctx) => {
       return;
     }
 
-    s.phase = "followup";
-    s.followUpIndex = 0;
-    s.answers = [];
-    await ctx.reply(FOLLOW_UP_QUESTIONS[0]);
+    // второй скрининговый вопрос теперь текстом
+    s.awaitingScreeningText2 = true;
+    await ctx.reply(SCREENING_QUESTIONS[1]);
     return;
   }
 });
@@ -108,6 +127,23 @@ bot.on("text", async (ctx) => {
 
   const userId = ctx.from.id;
   const s = getSession(userId);
+
+  if (s.phase === "screening" && s.screening === true && s.awaitingScreeningText2) {
+    const text = ctx.message.text.trim();
+    if (!text) {
+      await ctx.reply("Пожалуйста, отправьте непустой ответ.");
+      return;
+    }
+    s.awaitingScreeningText2 = false;
+
+    s.phase = "followup";
+    s.followUpIndex = 0;
+    s.answers = [];
+    // Сохраняем текстовый ответ как “нулевой” скрининг-мета, если нужно будет выводить/логировать позже.
+    s.screeningText2 = text;
+    await ctx.reply(FOLLOW_UP_QUESTIONS[0]);
+    return;
+  }
 
   if (s.phase !== "followup" || s.followUpIndex === undefined || !s.answers) {
     await ctx.reply("Чтобы начать опрос, отправьте /start");
