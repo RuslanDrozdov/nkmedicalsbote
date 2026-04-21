@@ -11,6 +11,14 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
+function withTimeout(promise, ms, label) {
+  let t;
+  const timeout = new Promise((_, reject) => {
+    t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
+
 const yesNoKeyboard = () =>
   Markup.inlineKeyboard([
     [Markup.button.callback("Да", "ans:yes"), Markup.button.callback("Нет", "ans:no")],
@@ -31,6 +39,16 @@ function resetSession(userId) {
 }
 
 const bot = new Telegraf(BOT_TOKEN);
+bot.catch((err, ctx) => {
+  console.error("Bot error:", err);
+  try {
+    if (ctx?.chat?.id) {
+      ctx.reply("Произошла ошибка. Попробуйте снова: /start").catch(() => {});
+    }
+  } catch {
+    // ignore
+  }
+});
 
 bot.start(async (ctx) => {
   const userId = ctx.from.id;
@@ -119,9 +137,38 @@ bot.on("text", async (ctx) => {
   await ctx.reply(FOLLOW_UP_QUESTIONS[next]);
 });
 
-bot.launch().then(() => {
+console.log("Запуск бота (Telegraf, long polling)…");
+
+try {
+  const me = await withTimeout(bot.telegram.getMe(), 10_000, "telegram.getMe()");
+  console.log(`Токен валиден. Bot: @${me.username} (${me.id})`);
+} catch (e) {
+  console.error(
+    "Не удалось обратиться к Telegram API. Проверьте доступ к api.telegram.org и BOT_TOKEN. Ошибка:",
+    e,
+  );
+  process.exit(1);
+}
+
+try {
+  console.log("Запускаю long polling…");
+  // В Telegraf `launch()` может не резолвиться (polling работает бесконечно),
+  // поэтому не ждём завершения, а логируем сразу.
+  bot.launch({ dropPendingUpdates: true }).catch((e) => {
+    console.error(
+      "Ошибка при запуске/работе long polling. Возможные причины: webhook включён, второй экземпляр бота уже запущен, либо сеть. Ошибка:",
+      e,
+    );
+    process.exit(1);
+  });
   console.log("Бот запущен (long polling). Остановка: Ctrl+C");
-});
+} catch (e) {
+  console.error(
+    "Не удалось запустить long polling. Возможные причины: webhook включён, второй экземпляр бота уже запущен, либо сеть. Ошибка:",
+    e,
+  );
+  process.exit(1);
+}
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
