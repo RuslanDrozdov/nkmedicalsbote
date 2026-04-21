@@ -13,6 +13,156 @@ function yesNoKeyboard() {
   return new InlineKeyboard().text("Да", "ans:yes").text("Нет", "ans:no");
 }
 
+function reminderTimeKeyboard() {
+  return new InlineKeyboard()
+    .text("Вкл/выкл", "rem:toggle")
+    .text("Время", "rem:set_time")
+    .row()
+    .text("Часовой пояс", "rem:set_tz")
+    .text("Тест сейчас", "rem:test");
+}
+
+function reminderOpenKeyboard() {
+  return new InlineKeyboard().text("Напоминания ⏰", "rem:open");
+}
+
+const REMINDER_TIME_RE = /^(?<hh>[01]\d|2[0-3]):(?<mm>[0-5]\d)$/;
+
+/**
+ * @param {import("@cloudflare/workers-types").D1Database} db
+ * @param {number} userId
+ */
+async function ensureReminderRow(db, userId) {
+  if (!db) return null;
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO reminder_settings (user_id, timezone, time_hhmm, enabled)
+       VALUES (?, 'UTC', '09:00', 0)`,
+    )
+    .bind(userId)
+    .run();
+  return await db
+    .prepare(
+      `SELECT user_id, timezone, time_hhmm, enabled, last_sent_local_date
+       FROM reminder_settings WHERE user_id = ?`,
+    )
+    .bind(userId)
+    .first();
+}
+
+/**
+ * @param {import("@cloudflare/workers-types").D1Database} db
+ * @param {number} userId
+ * @param {Partial<{timezone:string,time_hhmm:string,enabled:number,last_sent_local_date:string|null}>} patch
+ */
+async function updateReminderRow(db, userId, patch) {
+  if (!db) return;
+  const fields = [];
+  const values = [];
+  if (typeof patch.timezone === "string") {
+    fields.push("timezone = ?");
+    values.push(patch.timezone);
+  }
+  if (typeof patch.time_hhmm === "string") {
+    fields.push("time_hhmm = ?");
+    values.push(patch.time_hhmm);
+  }
+  if (typeof patch.enabled === "number") {
+    fields.push("enabled = ?");
+    values.push(patch.enabled);
+  }
+  if ("last_sent_local_date" in patch) {
+    fields.push("last_sent_local_date = ?");
+    values.push(patch.last_sent_local_date);
+  }
+  if (fields.length === 0) return;
+  values.push(userId);
+  await db
+    .prepare(`UPDATE reminder_settings SET ${fields.join(", ")} WHERE user_id = ?`)
+    .bind(...values)
+    .run();
+}
+
+function fmtReminderRow(row) {
+  const enabled = Number(row?.enabled ?? 0) === 1;
+  const time = String(row?.time_hhmm ?? "09:00");
+  const tz = String(row?.timezone ?? "UTC");
+  return (
+    `Напоминание: ${enabled ? "включено" : "выключено"}\n` +
+    `Время: ${time}\n` +
+    `Часовой пояс: ${tz}\n\n` +
+    `Нажмите кнопки ниже или отправьте время в формате HH:MM после выбора «Время».`
+  );
+}
+
+function safeLocalParts(date, timeZone) {
+  const tz = typeof timeZone === "string" && timeZone.trim() ? timeZone.trim() : "UTC";
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(date);
+    /** @type {Record<string,string>} */
+    const m = {};
+    for (const p of parts) {
+      if (p.type !== "literal") m[p.type] = p.value;
+    }
+    return { ymd: `${m.year}-${m.month}-${m.day}`, hm: `${m.hour}:${m.minute}`, tz };
+  } catch {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(date);
+    /** @type {Record<string,string>} */
+    const m = {};
+    for (const p of parts) {
+      if (p.type !== "literal") m[p.type] = p.value;
+    }
+    return { ymd: `${m.year}-${m.month}-${m.day}`, hm: `${m.hour}:${m.minute}`, tz: "UTC" };
+  }
+}
+
+function isValidTimeZone(tz) {
+  if (typeof tz !== "string" || !tz.trim()) return false;
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: tz.trim() });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Минимальный вызов Bot API без инициализации grammY (для cron).
+ * @param {{BOT_TOKEN:string}} env
+ * @param {number} chatId
+ * @param {string} text
+ */
+async function sendTelegramMessage(env, chatId, text) {
+  const token = env?.BOT_TOKEN ? String(env.BOT_TOKEN).trim() : "";
+  if (!token) return false;
+  const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      disable_web_page_preview: true,
+    }),
+  });
+  return resp.ok;
+}
+
 /**
  * @param {import("@cloudflare/workers-types").D1Database} db
  * @param {number} userId
@@ -97,11 +247,129 @@ function createBot(env) {
       screening: [null, null],
     };
     await ctx.reply(SCREENING_QUESTIONS[0], { reply_markup: yesNoKeyboard() });
+    await ctx.reply("Настройки:", { reply_markup: reminderOpenKeyboard() });
   });
 
   bot.command("cancel", async (ctx) => {
     ctx.session = defaultSession();
     await ctx.reply("Опрос отменён. Отправьте /start чтобы начать снова.");
+  });
+
+  bot.command("reminder", async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.reply("D1 не подключена (binding DB). Напоминания недоступны.");
+      return;
+    }
+    const row = await ensureReminderRow(ctx.db, uid);
+    ctx.session = ctx.session ?? defaultSession();
+    delete ctx.session.reminderAwaitingTime;
+    delete ctx.session.reminderAwaitingTz;
+    await ctx.reply(fmtReminderRow(row), { reply_markup: reminderTimeKeyboard() });
+  });
+
+  bot.callbackQuery(/^rem:open$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: "D1 не подключена" });
+      return;
+    }
+    const row = await ensureReminderRow(ctx.db, uid);
+    ctx.session = ctx.session ?? defaultSession();
+    delete ctx.session.reminderAwaitingTime;
+    delete ctx.session.reminderAwaitingTz;
+    await ctx.answerCallbackQuery();
+    await ctx.reply(fmtReminderRow(row), { reply_markup: reminderTimeKeyboard() });
+  });
+
+  bot.callbackQuery(/^rem:(toggle|set_time|set_tz|test)$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: "D1 не подключена" });
+      return;
+    }
+    const action = ctx.callbackQuery.data.slice("rem:".length);
+    const row = await ensureReminderRow(ctx.db, uid);
+    ctx.session = ctx.session ?? defaultSession();
+
+    if (action === "toggle") {
+      const enabled = Number(row?.enabled ?? 0) === 1 ? 0 : 1;
+      await updateReminderRow(ctx.db, uid, { enabled });
+      const updated = await ensureReminderRow(ctx.db, uid);
+      await ctx.answerCallbackQuery({ text: enabled ? "Включено" : "Выключено" });
+      await ctx.editMessageText(fmtReminderRow(updated), { reply_markup: reminderTimeKeyboard() });
+      return;
+    }
+
+    if (action === "set_time") {
+      ctx.session.reminderAwaitingTime = true;
+      ctx.session.reminderAwaitingTz = false;
+      await ctx.answerCallbackQuery();
+      await ctx.reply("Отправьте время в формате HH:MM (например 09:30).");
+      return;
+    }
+
+    if (action === "set_tz") {
+      ctx.session.reminderAwaitingTz = true;
+      ctx.session.reminderAwaitingTime = false;
+      const kb = new InlineKeyboard()
+        .text("Europe/Moscow (UTC+3)", "tz:Europe/Moscow")
+        .row()
+        .text("Europe/Kaliningrad (UTC+2)", "tz:Europe/Kaliningrad")
+        .row()
+        .text("Asia/Yekaterinburg (UTC+5)", "tz:Asia/Yekaterinburg")
+        .row()
+        .text("Asia/Novosibirsk (UTC+7)", "tz:Asia/Novosibirsk")
+        .row()
+        .text("Asia/Irkutsk (UTC+8)", "tz:Asia/Irkutsk")
+        .row()
+        .text("Asia/Yakutsk (UTC+9)", "tz:Asia/Yakutsk")
+        .row()
+        .text("Asia/Vladivostok (UTC+10)", "tz:Asia/Vladivostok")
+        .row()
+        .text("Asia/Magadan (UTC+11)", "tz:Asia/Magadan")
+        .row()
+        .text("Asia/Kamchatka (UTC+12)", "tz:Asia/Kamchatka")
+        .row()
+        .text("UTC", "tz:UTC");
+      await ctx.answerCallbackQuery();
+      await ctx.reply("Выберите часовой пояс.", { reply_markup: kb });
+      return;
+    }
+
+    if (action === "test") {
+      const ok = await sendTelegramMessage(
+        env,
+        uid,
+        "Тестовое напоминание. Если вы это видите — отправка работает.",
+      );
+      await ctx.answerCallbackQuery({ text: ok ? "Отправлено" : "Не удалось отправить" });
+      return;
+    }
+  });
+
+  bot.callbackQuery(/^tz:(.+)$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: "D1 не подключена" });
+      return;
+    }
+    const tz = ctx.callbackQuery.data.slice("tz:".length).trim();
+    if (!isValidTimeZone(tz)) {
+      await ctx.answerCallbackQuery({ text: "Некорректный часовой пояс" });
+      return;
+    }
+    await ensureReminderRow(ctx.db, uid);
+    await updateReminderRow(ctx.db, uid, { timezone: tz, last_sent_local_date: null });
+    const updated = await ensureReminderRow(ctx.db, uid);
+    ctx.session = ctx.session ?? defaultSession();
+    ctx.session.reminderAwaitingTz = false;
+    await ctx.answerCallbackQuery({ text: "Сохранено" });
+    await ctx.reply(fmtReminderRow(updated), { reply_markup: reminderTimeKeyboard() });
   });
 
   bot.callbackQuery(/^(ans:yes|ans:no)$/, async (ctx) => {
@@ -153,6 +421,27 @@ function createBot(env) {
     if (text.startsWith("/")) return;
 
     const s = ctx.session ?? defaultSession();
+
+    if (s.reminderAwaitingTime && s.phase !== "followup") {
+      if (!ctx.db) {
+        await ctx.reply("D1 не подключена (binding DB).");
+        s.reminderAwaitingTime = false;
+        return;
+      }
+      const trimmed = text.trim();
+      const m = REMINDER_TIME_RE.exec(trimmed);
+      if (!m) {
+        await ctx.reply("Не похоже на время. Пример: 09:30");
+        return;
+      }
+      await ensureReminderRow(ctx.db, ctx.from.id);
+      await updateReminderRow(ctx.db, ctx.from.id, { time_hhmm: trimmed, last_sent_local_date: null });
+      const updated = await ensureReminderRow(ctx.db, ctx.from.id);
+      s.reminderAwaitingTime = false;
+      await ctx.reply("Сохранено.");
+      await ctx.reply(fmtReminderRow(updated), { reply_markup: reminderTimeKeyboard() });
+      return;
+    }
 
     if (s.phase !== "followup" || s.followUpIndex === undefined || !s.answers) {
       await ctx.reply("Чтобы начать опрос, отправьте /start");
@@ -352,6 +641,53 @@ export default {
     } catch (e) {
       console.error("webhook handler:", e);
       return new Response("Internal error", { status: 500 });
+    }
+  },
+
+  /**
+   * Cron-trigger: отправка напоминаний.
+   * @param {ScheduledEvent} _event
+   * @param {{ BOT_TOKEN: string, DB: import("@cloudflare/workers-types").D1Database }} env
+   */
+  async scheduled(_event, env) {
+    if (!env?.DB) return;
+    const token = env?.BOT_TOKEN ? String(env.BOT_TOKEN).trim() : "";
+    if (!token) return;
+
+    let rows;
+    try {
+      const res = await env.DB.prepare(
+        `SELECT user_id, timezone, time_hhmm, enabled, last_sent_local_date
+         FROM reminder_settings WHERE enabled = 1`,
+      ).all();
+      rows = res?.results ?? [];
+    } catch (e) {
+      console.error("reminder_settings SELECT:", e);
+      return;
+    }
+
+    const now = new Date();
+    for (const row of rows) {
+      const uid = Number(row.user_id);
+      if (!uid) continue;
+      const desired = String(row.time_hhmm ?? "09:00");
+      const tz = String(row.timezone ?? "UTC");
+      const { ymd, hm } = safeLocalParts(now, tz);
+      if (hm !== desired) continue;
+      if (row.last_sent_local_date && String(row.last_sent_local_date) === ymd) continue;
+
+      const ok = await sendTelegramMessage(
+        env,
+        uid,
+        `Напоминание по расписанию (${desired} ${tz}). Если хотите изменить — /reminder`,
+      );
+      if (!ok) continue;
+
+      try {
+        await updateReminderRow(env.DB, uid, { last_sent_local_date: ymd });
+      } catch (e) {
+        console.error("reminder_settings UPDATE:", e);
+      }
     }
   },
 };

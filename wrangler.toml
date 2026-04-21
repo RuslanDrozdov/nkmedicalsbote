@@ -2,6 +2,10 @@ name = "nkmedicalsbote"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
+# Раз в минуту проверяем, кому пора отправить напоминание
+[triggers]
+crons = ["* * * * *"]
+
 # 1) Секреты: wrangler secret put BOT_TOKEN
 #    Опционально: wrangler secret put WEBHOOK_SECRET (случайная строка; тот же в setWebhook)
 # 2) Схема D1 (удалённо): npm run db:init:remote

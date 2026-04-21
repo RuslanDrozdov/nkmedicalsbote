@@ -3,7 +3,6 @@ import { Telegraf, Markup } from "telegraf";
 import {
   SCREENING_QUESTIONS,
   FOLLOW_UP_QUESTIONS,
-  REQUIRE_BOTH_YES,
 } from "./constants.js";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -17,7 +16,7 @@ const yesNoKeyboard = () =>
     [Markup.button.callback("Да", "ans:yes"), Markup.button.callback("Нет", "ans:no")],
   ]);
 
-/** @type {Map<number, { phase: string, screening?: [boolean|null, boolean|null], followUpIndex?: number, answers?: string[] }>} */
+/** @type {Map<number, { phase: string, screening?: boolean|null, followUpIndex?: number, answers?: string[] }>} */
 const sessions = new Map();
 
 function getSession(userId) {
@@ -38,7 +37,7 @@ bot.start(async (ctx) => {
   resetSession(userId);
   const s = getSession(userId);
   s.phase = "screening";
-  s.screening = [null, null];
+  s.screening = null;
   await ctx.reply(SCREENING_QUESTIONS[0], yesNoKeyboard());
 });
 
@@ -59,32 +58,20 @@ bot.on("callback_query", async (ctx) => {
 
   const yes = data === "ans:yes";
 
-  if (s.phase !== "screening" || !s.screening) {
+  if (s.phase !== "screening") {
     await ctx.answerCbQuery("Сначала отправьте /start");
     return;
   }
 
   await ctx.answerCbQuery();
 
-  if (s.screening[0] === null) {
-    s.screening[0] = yes;
-    await ctx.editMessageReplyMarkup(undefined);
-    await ctx.reply(SCREENING_QUESTIONS[1], yesNoKeyboard());
-    return;
-  }
-
-  if (s.screening[1] === null) {
-    s.screening[1] = yes;
+  if (s.screening === null || s.screening === undefined) {
+    s.screening = yes;
     await ctx.editMessageReplyMarkup(undefined);
 
-    const first = s.screening[0];
-    const second = s.screening[1];
-    const proceed =
-      REQUIRE_BOTH_YES ? first === true && second === true : first === true || second === true;
-
-    if (!proceed) {
+    if (!yes) {
       await ctx.reply(
-        "Спасибо Елена Петровна за ответы. Дальнейшие вопросы не требуются. При необходимости снова нажмите /start.",
+        "Спасибо Елена Петровна за ответы. Опрос окончен. При необходимости снова нажмите /start.",
       );
       s.phase = "done";
       return;

@@ -28,3 +28,16 @@ CREATE TABLE IF NOT EXISTS survey_responses (
 
 CREATE INDEX IF NOT EXISTS idx_survey_responses_user ON survey_responses (user_id);
 CREATE INDEX IF NOT EXISTS idx_survey_responses_completed ON survey_responses (completed_at);
+
+-- Настройки напоминаний (cron в Worker)
+-- timezone: IANA TZ (например, Europe/Moscow)
+-- time_hhmm: локальное время, например "09:00"
+CREATE TABLE IF NOT EXISTS reminder_settings (
+  user_id INTEGER PRIMARY KEY NOT NULL,
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  time_hhmm TEXT NOT NULL DEFAULT '09:00',
+  enabled INTEGER NOT NULL DEFAULT 0,
+  last_sent_local_date TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminder_settings_enabled ON reminder_settings (enabled);
