@@ -394,6 +394,16 @@ function createBot(env) {
     if (s.screening[0] === null) {
       s.screening[0] = yes;
       await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
+      if (!yes) {
+        await ctx.reply(
+          "Спасибо за ответ. Опрос прекращён.\n\nЧтобы пройти опрос снова — отправьте /start.",
+        );
+        s.phase = "done";
+        delete s.followUpIndex;
+        delete s.answers;
+        delete s.screening;
+        return;
+      }
       await ctx.reply(SCREENING_QUESTIONS[1], { reply_markup: yesNoKeyboard() });
       return;
     }
