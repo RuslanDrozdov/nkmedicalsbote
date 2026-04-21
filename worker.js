@@ -412,20 +412,6 @@ function createBot(env) {
       s.screening[1] = yes;
       await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
 
-      const first = s.screening[0];
-      const second = s.screening[1];
-      const proceed = REQUIRE_BOTH_YES
-        ? first === true && second === true
-        : first === true || second === true;
-
-      if (!proceed) {
-        await ctx.reply(
-          "Спасибо за ответы. Дальнейшие вопросы не требуются. При необходимости снова нажмите /start.",
-        );
-        s.phase = "done";
-        return;
-      }
-
       s.phase = "followup";
       s.followUpIndex = 0;
       s.answers = [];
