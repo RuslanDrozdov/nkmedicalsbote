@@ -1,5 +1,16 @@
 /**
  * Установка webhook для продакшена.
+ *
+ * Контекст:
+ * - Этот скрипт нужен для webhook-режима (Cloudflare Worker, `worker.js`).
+ * - Альтернатива webhook-режиму — long polling (`bot.js`), где Telegram API
+ *   опрашивается из Node.js процесса.
+ *
+ * Важно:
+ * - Для одного BOT_TOKEN нельзя “безболезненно” держать одновременно webhook
+ *   и long polling. Если webhook установлен, polling-процесс часто будет
+ *   получать конфликты/ошибки, потому что Telegram будет слать апдейты в webhook.
+ *
  * Переменные окружения:
  *   BOT_TOKEN — токен бота
  *   WEBHOOK_URL — полный URL, например https://telegram-survey-bot.xxx.workers.dev/webhook
