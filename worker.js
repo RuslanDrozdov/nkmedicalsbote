@@ -1,15 +1,10 @@
 import { Bot, webhookCallback, InlineKeyboard } from "grammy";
 import {
-  SCREENING_QUESTIONS,
   FOLLOW_UP_QUESTIONS,
 } from "./constants.js";
 
 function defaultSession() {
   return { phase: "idle" };
-}
-
-function yesNoKeyboard() {
-  return new InlineKeyboard().text("Да", "ans:yes").text("Нет", "ans:no");
 }
 
 function reminderTimeKeyboard() {
@@ -173,6 +168,90 @@ async function sendTelegramMessage(env, chatId, text) {
  * @param {import("@cloudflare/workers-types").D1Database} db
  * @param {number} userId
  */
+async function getUserProfile(db, userId) {
+  if (!db) return null;
+  try {
+    return await db
+      .prepare(
+        `SELECT user_id, language, gender, birth_year, created_at, updated_at
+         FROM user_profile WHERE user_id = ?`,
+      )
+      .bind(userId)
+      .first();
+  } catch (e) {
+    console.error("getUserProfile:", e);
+    return null;
+  }
+}
+
+/**
+ * @param {import("@cloudflare/workers-types").D1Database} db
+ * @param {number} userId
+ * @param {{language:'ru'|'en', gender:'m'|'f', birth_year:string}} profile
+ */
+async function upsertUserProfile(db, userId, profile) {
+  if (!db) return false;
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    await db
+      .prepare(
+        `INSERT INTO user_profile (user_id, language, gender, birth_year, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           language = excluded.language,
+           gender = excluded.gender,
+           birth_year = excluded.birth_year,
+           updated_at = excluded.updated_at`,
+      )
+      .bind(
+        userId,
+        String(profile.language),
+        String(profile.gender),
+        String(profile.birth_year),
+        now,
+        now,
+      )
+      .run();
+    return true;
+  } catch (e) {
+    console.error("upsertUserProfile:", e);
+    return false;
+  }
+}
+
+function uiText(lang, key) {
+  const l = lang === "en" ? "en" : "ru";
+  /** @type {Record<string, {ru:string,en:string}>} */
+  const m = {
+    onboardingLang: { ru: "Выберите язык:", en: "Choose a language:" },
+    onboardingGender: { ru: "Выберите пол:", en: "Select gender:" },
+    onboardingBirthYear: { ru: "Введите год рождения:", en: "Enter birth year:" },
+    emptyAnswer: { ru: "Пожалуйста, отправьте непустой ответ.", en: "Please send a non-empty answer." },
+    alreadyToday: { ru: "Сегодня вы уже проходили опрос. Приходите завтра.", en: "You have already completed the survey today. Please come back tomorrow." },
+    startSurveyHint: { ru: "Чтобы пройти опрос, отправьте /survey", en: "To take the survey, send /survey" },
+    cancelled: { ru: "Опрос отменён. Отправьте /start чтобы начать снова.", en: "Cancelled. Send /start to begin again." },
+    needStart: { ru: "Сначала отправьте /start", en: "Please send /start first" },
+    doneThanks: { ru: "Спасибо! Вы ответили на все вопросы.", en: "Thanks! You answered all questions." },
+    answersHeader: { ru: "Ваши ответы на блок из 9 вопросов:", en: "Your answers (9 questions):" },
+  };
+  return (m[key] ?? m.needStart)[l];
+}
+
+function onboardingLangKeyboard() {
+  return new InlineKeyboard().text("Русский", "onb:lang:ru").text("English", "onb:lang:en");
+}
+
+function onboardingGenderKeyboard(lang) {
+  if (lang === "en") {
+    return new InlineKeyboard().text("Male", "onb:gender:m").text("Female", "onb:gender:f");
+  }
+  return new InlineKeyboard().text("Мужской", "onb:gender:m").text("Женский", "onb:gender:f");
+}
+
+/**
+ * @param {import("@cloudflare/workers-types").D1Database} db
+ * @param {number} userId
+ */
 async function loadSession(db, userId) {
   if (!db) return defaultSession();
   try {
@@ -212,6 +291,57 @@ async function saveSession(db, userId, state) {
   } catch (e) {
     console.error("saveSession:", e);
   }
+}
+
+/**
+ * @param {import("@cloudflare/workers-types").D1Database} db
+ * @param {number} userId
+ */
+async function getUserTimezone(db, userId) {
+  if (!db) return "UTC";
+  try {
+    const row = await db
+      .prepare(`SELECT timezone FROM reminder_settings WHERE user_id = ?`)
+      .bind(userId)
+      .first();
+    const tz = typeof row?.timezone === "string" ? row.timezone.trim() : "";
+    return tz || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+/**
+ * @param {import("@cloudflare/workers-types").D1Database} db
+ * @param {number} userId
+ * @param {Date} now
+ */
+async function hasCompletedSurveyToday(db, userId, now) {
+  if (!db) return false;
+  try {
+    const row = await db
+      .prepare(`SELECT completed_at FROM survey_responses WHERE user_id = ? ORDER BY completed_at DESC LIMIT 1`)
+      .bind(userId)
+      .first();
+    if (!row?.completed_at) return false;
+    const tz = await getUserTimezone(db, userId);
+    const last = new Date(Number(row.completed_at) * 1000);
+    const lastYmd = safeLocalParts(last, tz).ymd;
+    const nowYmd = safeLocalParts(now, tz).ymd;
+    return lastYmd === nowYmd;
+  } catch (e) {
+    console.error("hasCompletedSurveyToday:", e);
+    return false;
+  }
+}
+
+function startFollowUpSurvey(ctx) {
+  const s = ctx.session ?? defaultSession();
+  s.phase = "followup";
+  s.followUpIndex = 0;
+  s.answers = [];
+  ctx.session = s;
+  return ctx.reply(FOLLOW_UP_QUESTIONS[0]);
 }
 
 /**
@@ -300,18 +430,72 @@ function createBot(env) {
   bot.command("start", async (ctx) => {
     // Важно: не затирать поля дедупликации, иначе при ретраях Telegram получим дубль.
     const prev = ctx.session ?? defaultSession();
+    const uid = ctx.from?.id;
+    const profile = uid !== undefined ? await getUserProfile(ctx.db, uid) : null;
+
     ctx.session = {
-      phase: "screening",
-      // screening[0] — ответ «Да/Нет» на первый вопрос
-      // screening[1] — текстовый ответ на второй вопрос
-      screening: [null, null],
-      awaitingScreeningText2: false,
+      ...defaultSession(),
+      phase: profile ? "idle" : "onboarding",
+      onboardingStep: profile ? undefined : "lang",
+      onboarding: profile
+        ? undefined
+        : {
+            lang: "ru",
+            gender: null,
+            birthYear: null,
+          },
       lastUpdateId: ctx.update?.update_id ?? prev.lastUpdateId ?? undefined,
       lastMessageId: prev.lastMessageId,
       lastCallbackQueryId: prev.lastCallbackQueryId,
     };
-    await ctx.reply(SCREENING_QUESTIONS[0], { reply_markup: yesNoKeyboard() });
+
+    if (!profile) {
+      await ctx.reply(uiText("ru", "onboardingLang"), { reply_markup: onboardingLangKeyboard() });
+      await ctx.reply("Настройки:", { reply_markup: reminderOpenKeyboard() });
+      return;
+    }
+
+    // Профиль уже есть — запускаем/предлагаем опрос (не чаще 1 раза в сутки)
+    if (uid !== undefined && ctx.db) {
+      const already = await hasCompletedSurveyToday(ctx.db, uid, new Date());
+      if (already) {
+        await ctx.reply(uiText(profile.language, "alreadyToday") + "\n\n" + uiText(profile.language, "startSurveyHint"));
+        await ctx.reply("Настройки:", { reply_markup: reminderOpenKeyboard() });
+        return;
+      }
+    }
+
     await ctx.reply("Настройки:", { reply_markup: reminderOpenKeyboard() });
+    await startFollowUpSurvey(ctx);
+  });
+
+  bot.command("survey", async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    const profile = await getUserProfile(ctx.db, uid);
+    if (!profile) {
+      // Профиля нет — запускаем анкету
+      const prev = ctx.session ?? defaultSession();
+      ctx.session = {
+        ...defaultSession(),
+        phase: "onboarding",
+        onboardingStep: "lang",
+        onboarding: { lang: "ru", gender: null, birthYear: null },
+        lastUpdateId: ctx.update?.update_id ?? prev.lastUpdateId ?? undefined,
+        lastMessageId: prev.lastMessageId,
+        lastCallbackQueryId: prev.lastCallbackQueryId,
+      };
+      await ctx.reply(uiText("ru", "onboardingLang"), { reply_markup: onboardingLangKeyboard() });
+      return;
+    }
+    if (ctx.db) {
+      const already = await hasCompletedSurveyToday(ctx.db, uid, new Date());
+      if (already) {
+        await ctx.reply(uiText(profile.language, "alreadyToday"));
+        return;
+      }
+    }
+    await startFollowUpSurvey(ctx);
   });
 
   bot.command("cancel", async (ctx) => {
@@ -323,7 +507,10 @@ function createBot(env) {
       lastMessageId: prev.lastMessageId,
       lastCallbackQueryId: prev.lastCallbackQueryId,
     };
-    await ctx.reply("Опрос отменён. Отправьте /start чтобы начать снова.");
+    const uid = ctx.from?.id;
+    const profile = uid ? await getUserProfile(ctx.db, uid) : null;
+    const lang = profile?.language ?? ctx.session?.onboarding?.lang ?? "ru";
+    await ctx.reply(uiText(lang, "cancelled"));
   });
 
   bot.command("reminder", async (ctx) => {
@@ -443,38 +630,38 @@ function createBot(env) {
     await ctx.reply(fmtReminderRow(updated), { reply_markup: reminderTimeKeyboard() });
   });
 
-  bot.callbackQuery(/^(ans:yes|ans:no)$/, async (ctx) => {
+  bot.callbackQuery(/^onb:lang:(ru|en)$/, async (ctx) => {
     const s = ctx.session ?? defaultSession();
-    const data = ctx.callbackQuery.data;
-    const yes = data === "ans:yes";
-
-    if (s.phase !== "screening" || !s.screening) {
-      await ctx.answerCallbackQuery({ text: "Сначала отправьте /start" });
+    if (s.phase !== "onboarding") {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "needStart") });
       return;
     }
-
+    const lang = ctx.callbackQuery.data.slice("onb:lang:".length);
+    s.onboarding = s.onboarding ?? { lang: "ru", gender: null, birthYear: null };
+    s.onboarding.lang = lang === "en" ? "en" : "ru";
+    s.onboardingStep = "gender";
+    ctx.session = s;
     await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
+    await ctx.reply(uiText(s.onboarding.lang, "onboardingGender"), {
+      reply_markup: onboardingGenderKeyboard(s.onboarding.lang),
+    });
+  });
 
-    if (s.screening[0] === null) {
-      s.screening[0] = yes;
-      await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
-      if (!yes) {
-        await ctx.reply(
-          "Спасибо за ответ. Опрос прекращён.\n\nЧтобы пройти опрос снова — отправьте /start.",
-        );
-        s.phase = "done";
-        delete s.followUpIndex;
-        delete s.answers;
-        delete s.screening;
-        delete s.awaitingScreeningText2;
-        return;
-      }
-      s.awaitingScreeningText2 = true;
-      await ctx.reply(SCREENING_QUESTIONS[1]);
+  bot.callbackQuery(/^onb:gender:(m|f)$/, async (ctx) => {
+    const s = ctx.session ?? defaultSession();
+    if (s.phase !== "onboarding") {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "needStart") });
       return;
     }
-
-    // второй вопрос больше не через кнопки (теперь текст)
+    s.onboarding = s.onboarding ?? { lang: "ru", gender: null, birthYear: null };
+    const g = ctx.callbackQuery.data.slice("onb:gender:".length);
+    s.onboarding.gender = g === "f" ? "f" : "m";
+    s.onboardingStep = "birth_year";
+    ctx.session = s;
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
+    await ctx.reply(uiText(s.onboarding.lang, "onboardingBirthYear"));
   });
 
   bot.on("message:text", async (ctx) => {
@@ -482,20 +669,43 @@ function createBot(env) {
     if (text.startsWith("/")) return;
 
     const s = ctx.session ?? defaultSession();
+    const uid = ctx.from?.id;
+    const lang = s?.onboarding?.lang ?? "ru";
 
-    if (s.phase === "screening" && s.awaitingScreeningText2 && s.screening?.[0] === true) {
+    if (s.phase === "onboarding" && s.onboardingStep === "birth_year") {
       const trimmed = text.trim();
       if (!trimmed) {
-        await ctx.reply("Пожалуйста, отправьте непустой ответ.");
+        await ctx.reply(uiText(lang, "emptyAnswer"));
         return;
       }
-      s.screening[1] = trimmed;
-      s.awaitingScreeningText2 = false;
+      if (!ctx.db || !uid) {
+        await ctx.reply("D1 не подключена (binding DB).");
+        return;
+      }
+      s.onboarding = s.onboarding ?? { lang: "ru", gender: null, birthYear: null };
+      s.onboarding.birthYear = trimmed;
+      if (!s.onboarding.gender) {
+        await ctx.reply(uiText(lang, "needStart"));
+        return;
+      }
+      await upsertUserProfile(ctx.db, uid, {
+        language: s.onboarding.lang === "en" ? "en" : "ru",
+        gender: s.onboarding.gender === "f" ? "f" : "m",
+        birth_year: String(s.onboarding.birthYear ?? ""),
+      });
+      // После сохранения профиля переходим к опросу (с учётом ограничения “1 раз в день”)
+      s.phase = "idle";
+      delete s.onboardingStep;
+      delete s.onboarding;
+      ctx.session = s;
 
-      s.phase = "followup";
-      s.followUpIndex = 0;
-      s.answers = [];
-      await ctx.reply(FOLLOW_UP_QUESTIONS[0]);
+      const already = await hasCompletedSurveyToday(ctx.db, uid, new Date());
+      if (already) {
+        const profile = await getUserProfile(ctx.db, uid);
+        await ctx.reply(uiText(profile?.language ?? "ru", "alreadyToday"));
+        return;
+      }
+      await startFollowUpSurvey(ctx);
       return;
     }
 
@@ -521,13 +731,17 @@ function createBot(env) {
     }
 
     if (s.phase !== "followup" || s.followUpIndex === undefined || !s.answers) {
-      await ctx.reply("Чтобы начать опрос, отправьте /start");
+      const profile = uid ? await getUserProfile(ctx.db, uid) : null;
+      const l = profile?.language ?? lang;
+      await ctx.reply(uiText(l, "startSurveyHint"));
       return;
     }
 
     const trimmed = text.trim();
     if (!trimmed) {
-      await ctx.reply("Пожалуйста, отправьте непустой ответ.");
+      const profile = uid ? await getUserProfile(ctx.db, uid) : null;
+      const l = profile?.language ?? lang;
+      await ctx.reply(uiText(l, "emptyAnswer"));
       return;
     }
 
@@ -536,8 +750,7 @@ function createBot(env) {
 
     if (next >= FOLLOW_UP_QUESTIONS.length) {
       const answersSnapshot = [...s.answers];
-      const screeningSnapshot = s.screening ? [...s.screening] : null;
-      const uid = ctx.from?.id;
+      const profile = uid ? await getUserProfile(ctx.db, uid) : null;
 
       if (ctx.db && uid !== undefined) {
         try {
@@ -551,7 +764,7 @@ function createBot(env) {
               uid,
               now,
               JSON.stringify(answersSnapshot),
-              screeningSnapshot ? JSON.stringify(screeningSnapshot) : null,
+              null,
             )
             .run();
         } catch (e) {
@@ -562,12 +775,12 @@ function createBot(env) {
       s.phase = "done";
       delete s.followUpIndex;
       delete s.answers;
-      delete s.screening;
-      delete s.awaitingScreeningText2;
 
       await ctx.reply(
-        "Спасибо! Вы ответили на все вопросы.\n\n" +
-          "Ваши ответы на блок из 9 вопросов:\n\n" +
+        uiText(profile?.language ?? lang, "doneThanks") +
+          "\n\n" +
+          uiText(profile?.language ?? lang, "answersHeader") +
+          "\n\n" +
           answersSnapshot.map((a, i) => `${i + 1}. ${a}`).join("\n"),
       );
       return;
@@ -582,6 +795,7 @@ function createBot(env) {
 
 let cachedBot = null;
 let cachedToken = "";
+let commandsConfigured = false;
 
 // Fallback идемпотентность без D1: небольшой LRU по update_id в памяти изолята.
 // Не даёт 100% гарантию (изолят может пересоздаваться), но убирает типичные дубли при ретраях.
@@ -717,11 +931,26 @@ export default {
     if (!cachedBot || cachedToken !== env.BOT_TOKEN) {
       cachedBot = createBot(env);
       cachedToken = env.BOT_TOKEN;
+      commandsConfigured = false;
       try {
         await cachedBot.init();
       } catch (e) {
         console.error("bot.init (проверьте BOT_TOKEN и доступ к api.telegram.org):", e);
         return new Response("Bot init failed", { status: 503 });
+      }
+    }
+
+    if (!commandsConfigured) {
+      try {
+        await cachedBot.api.setMyCommands([
+          { command: "start", description: "Начать" },
+          { command: "survey", description: "Пройти опрос (9 вопросов)" },
+          { command: "reminder", description: "Напоминания" },
+          { command: "cancel", description: "Отмена" },
+        ]);
+        commandsConfigured = true;
+      } catch (e) {
+        console.error("setMyCommands:", e);
       }
     }
 
@@ -773,10 +1002,14 @@ export default {
       if (hm !== desired) continue;
       if (row.last_sent_local_date && String(row.last_sent_local_date) === ymd) continue;
 
+      // Если уже проходил опрос сегодня — не отправляем повторное приглашение
+      const already = await hasCompletedSurveyToday(env.DB, uid, now);
+      if (already) continue;
+
       const ok = await sendTelegramMessage(
         env,
         uid,
-        `Пора пройти опрос (${desired} ${tz}).\n\nПожалуйста, начните опрос — отправьте /start\n\nНастройки времени: /reminder`,
+        `Пора пройти опрос (${desired} ${tz}).\n\nПожалуйста, начните опрос — отправьте /survey\n\nНастройки времени: /reminder`,
       );
       console.log("scheduled invite:", { uid, tz, desired, ok });
       if (!ok) continue;

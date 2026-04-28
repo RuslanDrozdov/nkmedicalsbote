@@ -41,3 +41,16 @@ CREATE TABLE IF NOT EXISTS reminder_settings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reminder_settings_enabled ON reminder_settings (enabled);
+
+-- Профиль пользователя (одноразовая анкета при первом старте)
+-- language: 'ru' | 'en'
+-- gender: 'm' | 'f'
+-- birth_year: свободный ввод (как строка)
+CREATE TABLE IF NOT EXISTS user_profile (
+  user_id INTEGER PRIMARY KEY NOT NULL,
+  language TEXT NOT NULL,
+  gender TEXT NOT NULL,
+  birth_year TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);

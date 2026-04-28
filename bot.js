@@ -1,7 +1,6 @@
 import "dotenv/config";
 import { Telegraf, Markup } from "telegraf";
 import {
-  SCREENING_QUESTIONS,
   FOLLOW_UP_QUESTIONS,
 } from "./constants.js";
 
@@ -19,12 +18,21 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
 }
 
-const yesNoKeyboard = () =>
+const onboardingLangKeyboard = () =>
   Markup.inlineKeyboard([
-    [Markup.button.callback("Да", "ans:yes"), Markup.button.callback("Нет", "ans:no")],
+    [Markup.button.callback("Русский", "onb:lang:ru"), Markup.button.callback("English", "onb:lang:en")],
   ]);
 
-/** @type {Map<number, { phase: string, screening?: boolean|null, followUpIndex?: number, answers?: string[] }>} */
+const onboardingGenderKeyboard = (lang) =>
+  lang === "en"
+    ? Markup.inlineKeyboard([
+        [Markup.button.callback("Male", "onb:gender:m"), Markup.button.callback("Female", "onb:gender:f")],
+      ])
+    : Markup.inlineKeyboard([
+        [Markup.button.callback("Мужской", "onb:gender:m"), Markup.button.callback("Женский", "onb:gender:f")],
+      ]);
+
+/** @type {Map<number, any>} */
 const sessions = new Map();
 
 function getSession(userId) {
@@ -36,6 +44,34 @@ function getSession(userId) {
 
 function resetSession(userId) {
   sessions.set(userId, { phase: "idle" });
+}
+
+function uiText(lang, key) {
+  const l = lang === "en" ? "en" : "ru";
+  const m = {
+    onboardingLang: { ru: "Выберите язык:", en: "Choose a language:" },
+    onboardingGender: { ru: "Выберите пол:", en: "Select gender:" },
+    onboardingBirthYear: { ru: "Введите год рождения:", en: "Enter birth year:" },
+    emptyAnswer: { ru: "Пожалуйста, отправьте непустой ответ.", en: "Please send a non-empty answer." },
+    alreadyToday: { ru: "Сегодня вы уже проходили опрос. Приходите завтра.", en: "You have already completed the survey today. Please come back tomorrow." },
+    startSurveyHint: { ru: "Чтобы пройти опрос, отправьте /start", en: "To take the survey, send /start" },
+  };
+  return (m[key] ?? m.startSurveyHint)[l];
+}
+
+function isSameLocalDay(d1, d2) {
+  return (
+    d1.getFullYear() === d2.getFullYear() &&
+    d1.getMonth() === d2.getMonth() &&
+    d1.getDate() === d2.getDate()
+  );
+}
+
+function startFollowUpSurvey(ctx, s) {
+  s.phase = "followup";
+  s.followUpIndex = 0;
+  s.answers = [];
+  return ctx.reply(FOLLOW_UP_QUESTIONS[0]);
 }
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -72,11 +108,10 @@ bot.start(async (ctx) => {
   const userId = ctx.from.id;
   resetSession(userId);
   const s = getSession(userId);
-  s.phase = "screening";
-  // screening: первый вопрос — yes/no, второй — текст
-  s.screening = null;
-  s.awaitingScreeningText2 = false;
-  await ctx.reply(SCREENING_QUESTIONS[0], yesNoKeyboard());
+  s.phase = "onboarding";
+  s.onboardingStep = "lang";
+  s.profile = null; // {lang, gender, birthYear}
+  await ctx.reply(uiText("ru", "onboardingLang"), onboardingLangKeyboard());
 });
 
 bot.command("cancel", async (ctx) => {
@@ -89,37 +124,42 @@ bot.on("callback_query", async (ctx) => {
   const s = getSession(userId);
   const data = ctx.callbackQuery.data;
 
-  if (data !== "ans:yes" && data !== "ans:no") {
+  if (typeof data !== "string") {
     await ctx.answerCbQuery();
     return;
   }
 
-  const yes = data === "ans:yes";
+  if (data.startsWith("onb:lang:")) {
+    if (s.phase !== "onboarding") {
+      await ctx.answerCbQuery("Сначала отправьте /start");
+      return;
+    }
+    const lang = data.slice("onb:lang:".length) === "en" ? "en" : "ru";
+    s.profile = s.profile ?? { lang: "ru", gender: null, birthYear: null };
+    s.profile.lang = lang;
+    s.onboardingStep = "gender";
+    await ctx.answerCbQuery();
+    await ctx.editMessageReplyMarkup(undefined);
+    await ctx.reply(uiText(lang, "onboardingGender"), onboardingGenderKeyboard(lang));
+    return;
+  }
 
-  if (s.phase !== "screening") {
-    await ctx.answerCbQuery("Сначала отправьте /start");
+  if (data.startsWith("onb:gender:")) {
+    if (s.phase !== "onboarding") {
+      await ctx.answerCbQuery("Сначала отправьте /start");
+      return;
+    }
+    const gender = data.slice("onb:gender:".length) === "f" ? "f" : "m";
+    s.profile = s.profile ?? { lang: "ru", gender: null, birthYear: null };
+    s.profile.gender = gender;
+    s.onboardingStep = "birth_year";
+    await ctx.answerCbQuery();
+    await ctx.editMessageReplyMarkup(undefined);
+    await ctx.reply(uiText(s.profile.lang, "onboardingBirthYear"));
     return;
   }
 
   await ctx.answerCbQuery();
-
-  if (s.screening === null || s.screening === undefined) {
-    s.screening = yes;
-    await ctx.editMessageReplyMarkup(undefined);
-
-    if (!yes) {
-      await ctx.reply(
-        "Спасибо Елена Петровна за ответы. Опрос окончен. При необходимости снова нажмите /start.",
-      );
-      s.phase = "done";
-      return;
-    }
-
-    // второй скрининговый вопрос теперь текстом
-    s.awaitingScreeningText2 = true;
-    await ctx.reply(SCREENING_QUESTIONS[1]);
-    return;
-  }
 });
 
 bot.on("text", async (ctx) => {
@@ -128,31 +168,36 @@ bot.on("text", async (ctx) => {
   const userId = ctx.from.id;
   const s = getSession(userId);
 
-  if (s.phase === "screening" && s.screening === true && s.awaitingScreeningText2) {
+  if (s.phase === "onboarding" && s.onboardingStep === "birth_year") {
     const text = ctx.message.text.trim();
+    const lang = s.profile?.lang ?? "ru";
     if (!text) {
-      await ctx.reply("Пожалуйста, отправьте непустой ответ.");
+      await ctx.reply(uiText(lang, "emptyAnswer"));
       return;
     }
-    s.awaitingScreeningText2 = false;
-
-    s.phase = "followup";
-    s.followUpIndex = 0;
-    s.answers = [];
-    // Сохраняем текстовый ответ как “нулевой” скрининг-мета, если нужно будет выводить/логировать позже.
-    s.screeningText2 = text;
-    await ctx.reply(FOLLOW_UP_QUESTIONS[0]);
+    s.profile = s.profile ?? { lang: "ru", gender: null, birthYear: null };
+    s.profile.birthYear = text;
+    s.onboardingStep = null;
+    // локально: считаем профиль заполненным и запускаем опрос, если сегодня ещё не проходили
+    if (s.lastSurveyCompletedAt && isSameLocalDay(new Date(s.lastSurveyCompletedAt), new Date())) {
+      s.phase = "idle";
+      await ctx.reply(uiText(lang, "alreadyToday"));
+      return;
+    }
+    await startFollowUpSurvey(ctx, s);
     return;
   }
 
   if (s.phase !== "followup" || s.followUpIndex === undefined || !s.answers) {
-    await ctx.reply("Чтобы начать опрос, отправьте /start");
+    const lang = s.profile?.lang ?? "ru";
+    await ctx.reply(uiText(lang, "startSurveyHint"));
     return;
   }
 
   const text = ctx.message.text.trim();
   if (!text) {
-    await ctx.reply("Пожалуйста, отправьте непустой ответ.");
+    const lang = s.profile?.lang ?? "ru";
+    await ctx.reply(uiText(lang, "emptyAnswer"));
     return;
   }
 
@@ -161,6 +206,7 @@ bot.on("text", async (ctx) => {
 
   if (next >= FOLLOW_UP_QUESTIONS.length) {
     s.phase = "done";
+    s.lastSurveyCompletedAt = Date.now();
     await ctx.reply(
       "Спасибо! Вы ответили на все вопросы.\n\n" +
         "Ваши ответы на блок из 9 вопросов:\n\n" +
