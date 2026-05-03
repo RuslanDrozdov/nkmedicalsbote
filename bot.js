@@ -125,6 +125,7 @@ function uiText(lang, key) {
     emptyAnswer: { ru: "Пожалуйста, отправьте непустой ответ.", en: "Please send a non-empty answer." },
     alreadyToday: { ru: "Сегодня вы уже проходили опрос. Приходите завтра.", en: "You have already completed the survey today. Please come back tomorrow." },
     startSurveyHint: { ru: "Чтобы пройти опрос, отправьте /start", en: "To take the survey, send /start" },
+    doneThanks: { ru: "Спасибо! Вы ответили на все вопросы.", en: "Thanks! You answered all questions." },
   };
   return (m[key] ?? m.startSurveyHint)[l];
 }
@@ -312,14 +313,10 @@ bot.on("text", async (ctx) => {
   const next = s.followUpIndex + 1;
 
   if (next >= FOLLOW_UP_QUESTIONS.length) {
-    // Достигли конца списка вопросов — завершаем блок и показываем сводку.
+    // Достигли конца списка вопросов — завершаем блок (сводку ответов в чат не отправляем).
     s.phase = "done";
     s.lastSurveyCompletedAt = Date.now();
-    await ctx.reply(
-      "Спасибо! Вы ответили на все вопросы.\n\n" +
-        "Ваши ответы на блок из 9 вопросов:\n\n" +
-        s.answers.map((a, i) => `${i + 1}. ${a}`).join("\n"),
-    );
+    await ctx.reply(uiText(s.profile?.lang ?? "ru", "doneThanks"));
     return;
   }
 

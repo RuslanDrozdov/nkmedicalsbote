@@ -1,4 +1,4 @@
-import { Bot, webhookCallback, InlineKeyboard } from "grammy";
+import { Bot, webhookCallback, InlineKeyboard, InputFile } from "grammy";
 import {
   FOLLOW_UP_QUESTIONS,
 } from "./constants.js";
@@ -241,7 +241,6 @@ function uiText(lang, key) {
     cancelled: { ru: "Опрос отменён. Отправьте /start чтобы начать снова.", en: "Cancelled. Send /start to begin again." },
     needStart: { ru: "Сначала отправьте /start", en: "Please send /start first" },
     doneThanks: { ru: "Спасибо! Вы ответили на все вопросы.", en: "Thanks! You answered all questions." },
-    answersHeader: { ru: "Ваши ответы на блок из 9 вопросов:", en: "Your answers (9 questions):" },
     remindersBtn: { ru: "Напоминания ⏰", en: "Reminders ⏰" },
     statisticsBtn: { ru: "Статистика", en: "Statistics" },
     settingsHeader: { ru: "Настройки:", en: "Settings:" },
@@ -268,6 +267,12 @@ function uiText(lang, key) {
       en: "Tap a day below for details.",
     },
     statsNoDayEntries: { ru: "Нет записей", en: "No entries" },
+    statsExportBtn: { ru: "Скачать таблицу", en: "Download spreadsheet" },
+    statsExportCaption: {
+      ru: "Файл CSV — откройте в Excel (UTF-8).",
+      en: "CSV file — open in Excel (UTF-8).",
+    },
+    statsExportColTime: { ru: "Дата и время", en: "Date and time" },
   };
   return (m[key] ?? m.needStart)[l];
 }
@@ -494,6 +499,42 @@ function parseAnswersJson(json) {
   }
 }
 
+/** @param {string} s */
+function csvEscapeCell(s) {
+  const str = String(s ?? "");
+  if (/[",\r\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+  return str;
+}
+
+/**
+ * UTF-8 CSV с BOM для Excel; по одной строке на завершённый опрос.
+ * @param {any[]} rows D1: completed_at, answers_json
+ * @param {string} tz IANA
+ * @param {'ru'|'en'} lang заголовок колонки времени
+ */
+function buildSurveyExportCsvBytes(rows, tz, lang) {
+  const l = lang === "en" ? "en" : "ru";
+  const n = FOLLOW_UP_QUESTIONS.length;
+  const headerCells = [uiText(l, "statsExportColTime"), ...FOLLOW_UP_QUESTIONS.map((q) => String(q))];
+  const lines = [headerCells.map(csvEscapeCell).join(",")];
+  const sorted = [...rows].sort((a, b) => Number(a.completed_at) - Number(b.completed_at));
+  for (const row of sorted) {
+    const sec = Number(row.completed_at);
+    const { ymd, hm } = safeLocalParts(new Date(sec * 1000), tz);
+    const answers = parseAnswersJson(row.answers_json);
+    const cells = [`${ymd} ${hm}`];
+    for (let i = 0; i < n; i++) cells.push(answers[i] ?? "");
+    lines.push(cells.map(csvEscapeCell).join(","));
+  }
+  const body = lines.join("\r\n");
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
+  const enc = new TextEncoder().encode(body);
+  const out = new Uint8Array(bom.length + enc.length);
+  out.set(bom, 0);
+  out.set(enc, bom.length);
+  return out;
+}
+
 /**
  * @param {any[]} rows D1 rows completed_at, answers_json
  * @param {string} tz
@@ -566,6 +607,8 @@ function statsModeKeyboard(lang) {
   return new InlineKeyboard()
     .text(uiText(l, "statsByDays"), "st:md")
     .text(uiText(l, "statsByWeeks"), "st:mw")
+    .row()
+    .text(uiText(l, "statsExportBtn"), "st:ex")
     .row()
     .text(uiText(l, "statsBackSettings"), "st:sb");
 }
@@ -1059,6 +1102,30 @@ function createBot(env) {
     await ctx.answerCallbackQuery();
   });
 
+  bot.callbackQuery(/^st:ex$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const profile = await getUserProfile(ctx.db, uid);
+    const lang = profile?.language === "en" ? "en" : "ru";
+    const tz = await getUserTimezone(ctx.db, uid);
+    const rows = await listSurveyResponsesForUser(ctx.db, uid);
+    if (rows.length === 0) {
+      await ctx.answerCallbackQuery({ text: uiText(lang, "statsEmpty") });
+      return;
+    }
+    const bytes = buildSurveyExportCsvBytes(rows, tz, lang);
+    const ymdCompact = safeLocalParts(new Date(), tz).ymd.replace(/-/g, "");
+    const filename = `survey_export_${ymdCompact}.csv`;
+    await ctx.answerCallbackQuery();
+    await ctx.replyWithDocument(new InputFile(bytes, filename), {
+      caption: uiText(lang, "statsExportCaption"),
+    });
+  });
+
   bot.callbackQuery(/^st:o$/, async (ctx) => {
     const uid = ctx.from?.id;
     if (!uid) return;
@@ -1388,13 +1455,7 @@ function createBot(env) {
       delete s.followUpIndex;
       delete s.answers;
 
-      await ctx.reply(
-        uiText(profile?.language ?? lang, "doneThanks") +
-          "\n\n" +
-          uiText(profile?.language ?? lang, "answersHeader") +
-          "\n\n" +
-          answersSnapshot.map((a, i) => `${i + 1}. ${a}`).join("\n"),
-      );
+      await ctx.reply(uiText(profile?.language ?? lang, "doneThanks"));
       return;
     }
 
