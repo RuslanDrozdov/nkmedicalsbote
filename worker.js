@@ -16,8 +16,13 @@ function reminderTimeKeyboard() {
     .text("Тест сейчас", "rem:test");
 }
 
-function reminderOpenKeyboard() {
-  return new InlineKeyboard().text("Напоминания ⏰", "rem:open");
+/**
+ * @param {'ru'|'en'} lang
+ */
+function settingsKeyboard(lang) {
+  return new InlineKeyboard()
+    .text(uiText(lang, "remindersBtn"), "rem:open")
+    .text(uiText(lang, "statisticsBtn"), "st:o");
 }
 
 const REMINDER_TIME_RE = /^(?<hh>[01]\d|2[0-3]):(?<mm>[0-5]\d)$/;
@@ -226,6 +231,10 @@ function uiText(lang, key) {
     onboardingLang: { ru: "Выберите язык:", en: "Choose a language:" },
     onboardingGender: { ru: "Выберите пол:", en: "Select gender:" },
     onboardingBirthYear: { ru: "Введите год рождения:", en: "Enter birth year:" },
+    onboardingReminder: {
+      ru: "Хотите получать напоминания об опросе? Откройте настройки:",
+      en: "Want reminders about the survey? Open settings:",
+    },
     emptyAnswer: { ru: "Пожалуйста, отправьте непустой ответ.", en: "Please send a non-empty answer." },
     alreadyToday: { ru: "Сегодня вы уже проходили опрос. Приходите завтра.", en: "You have already completed the survey today. Please come back tomorrow." },
     startSurveyHint: { ru: "Чтобы пройти опрос, отправьте /survey", en: "To take the survey, send /survey" },
@@ -233,6 +242,32 @@ function uiText(lang, key) {
     needStart: { ru: "Сначала отправьте /start", en: "Please send /start first" },
     doneThanks: { ru: "Спасибо! Вы ответили на все вопросы.", en: "Thanks! You answered all questions." },
     answersHeader: { ru: "Ваши ответы на блок из 9 вопросов:", en: "Your answers (9 questions):" },
+    remindersBtn: { ru: "Напоминания ⏰", en: "Reminders ⏰" },
+    statisticsBtn: { ru: "Статистика", en: "Statistics" },
+    settingsHeader: { ru: "Настройки:", en: "Settings:" },
+    statsTitle: { ru: "Статистика опросов", en: "Survey statistics" },
+    statsModeHint: {
+      ru: "Выберите просмотр: по дням (календарь) или по неделям.",
+      en: "Choose view: by day (calendar) or by week.",
+    },
+    statsByDays: { ru: "По дням", en: "By day" },
+    statsByWeeks: { ru: "По неделям", en: "By week" },
+    statsBackSettings: { ru: "Назад к настройкам", en: "Back to settings" },
+    statsBackModes: { ru: "К режимам", en: "Back to modes" },
+    statsBackCalendar: { ru: "К календарю", en: "Back to calendar" },
+    statsBackWeek: { ru: "К неделе", en: "Back to week" },
+    statsEmpty: { ru: "Пока нет завершённых опросов.", en: "No completed surveys yet." },
+    statsNoDb: { ru: "База данных недоступна.", en: "Database unavailable." },
+    statsDayHeader: { ru: "Ответы за", en: "Answers for" },
+    statsWeekHeader: { ru: "Неделя", en: "Week" },
+    statsWeekCount: { ru: "Завершений за неделю:", en: "Completions this week:" },
+    statsPassAt: { ru: "Прохождение", en: "Completion" },
+    statsCalendarHint: { ru: "Точка — есть ответы в этот день. Выберите день.", en: "Dot = answers that day. Pick a day." },
+    statsWeekPickDay: {
+      ru: "Нажмите день недели для подробностей.",
+      en: "Tap a day below for details.",
+    },
+    statsNoDayEntries: { ru: "Нет записей", en: "No entries" },
   };
   return (m[key] ?? m.needStart)[l];
 }
@@ -333,6 +368,342 @@ async function hasCompletedSurveyToday(db, userId, now) {
     console.error("hasCompletedSurveyToday:", e);
     return false;
   }
+}
+
+/**
+ * Локальный полдень для календарной даты в IANA TZ (согласуется с safeLocalParts).
+ * @param {number} y
+ * @param {number} mo1to12
+ * @param {number} d
+ * @param {string} tz
+ */
+function instantForLocalDate(y, mo1to12, d, tz) {
+  const target = `${y}-${String(mo1to12).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  let guess = Date.UTC(y, mo1to12 - 1, d, 12, 0, 0);
+  for (let i = 0; i < 48; i++) {
+    const { ymd } = safeLocalParts(new Date(guess), tz);
+    if (ymd === target) return guess;
+    guess += ymd < target ? 3600000 : -3600000;
+  }
+  return guess;
+}
+
+/**
+ * Понедельник = 0 … воскресенье = 6 (локально в tz).
+ * @param {number} utcMs
+ * @param {string} tz
+ */
+function localWeekdayMon0FromUtcMs(utcMs, tz) {
+  const short = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(new Date(utcMs));
+  /** @type {Record<string, number>} */
+  const map = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+  return map[short] ?? 0;
+}
+
+/**
+ * @param {number} y
+ * @param {number} mo1to12
+ */
+function daysInGregorianMonth(y, mo1to12) {
+  return new Date(y, mo1to12, 0).getDate();
+}
+
+/**
+ * @param {string} ymd `YYYY-MM-DD`
+ * @param {number} delta
+ * @param {string} tz
+ */
+function addLocalDays(ymd, delta, tz) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const ms = instantForLocalDate(y, m, d, tz) + delta * 86400000;
+  return safeLocalParts(new Date(ms), tz).ymd;
+}
+
+/**
+ * Понедельник недели, в которую попадает локальная дата ymd (в tz).
+ * @param {string} ymd
+ * @param {string} tz
+ */
+function mondayYmdOfWeekContaining(ymd, tz) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const ms = instantForLocalDate(y, m, d, tz);
+  const w = localWeekdayMon0FromUtcMs(ms, tz);
+  return addLocalDays(ymd, -w, tz);
+}
+
+/** @param {string} ymd */
+function ymdToCompact8(ymd) {
+  return ymd.replace(/-/g, "");
+}
+
+/** @param {string} compact8 `YYYYMMDD` */
+function compact8ToYmd(compact8) {
+  const s = String(compact8);
+  if (s.length !== 8) return null;
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+}
+
+/** @param {string} ymd */
+function ymdToYmm(ymd) {
+  return parseInt(ymd.slice(0, 4) + ymd.slice(5, 7), 10);
+}
+
+/** @param {number} yyyymm */
+function shiftMonthYmm(yyyymm, delta) {
+  let y = Math.floor(yyyymm / 100);
+  let mo = yyyymm % 100;
+  mo += delta;
+  while (mo < 1) {
+    mo += 12;
+    y -= 1;
+  }
+  while (mo > 12) {
+    mo -= 12;
+    y += 1;
+  }
+  return y * 100 + mo;
+}
+
+/**
+ * @param {import("@cloudflare/workers-types").D1Database} db
+ * @param {number} userId
+ */
+async function listSurveyResponsesForUser(db, userId) {
+  if (!db) return [];
+  try {
+    const res = await db
+      .prepare(
+        `SELECT completed_at, answers_json FROM survey_responses WHERE user_id = ? ORDER BY completed_at ASC`,
+      )
+      .bind(userId)
+      .all();
+    return res?.results ?? [];
+  } catch (e) {
+    console.error("listSurveyResponsesForUser:", e);
+    return [];
+  }
+}
+
+/** @param {unknown} json */
+function parseAnswersJson(json) {
+  try {
+    const a = JSON.parse(String(json ?? "[]"));
+    return Array.isArray(a) ? a.map((x) => String(x)) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * @param {any[]} rows D1 rows completed_at, answers_json
+ * @param {string} tz
+ * @returns {Map<string, { completedAtSec: number, answers: string[] }[]>}
+ */
+function bucketResponsesByLocalYmd(rows, tz) {
+  /** @type {Map<string, { completedAtSec: number, answers: string[] }[]>} */
+  const map = new Map();
+  for (const row of rows) {
+    const sec = Number(row.completed_at);
+    const ymd = safeLocalParts(new Date(sec * 1000), tz).ymd;
+    const arr = map.get(ymd) ?? [];
+    arr.push({ completedAtSec: sec, answers: parseAnswersJson(row.answers_json) });
+    map.set(ymd, arr);
+  }
+  return map;
+}
+
+/**
+ * @param {string} text
+ * @param {number} maxLen
+ */
+function splitTextChunks(text, maxLen) {
+  if (text.length <= maxLen) return [text];
+  const parts = [];
+  let i = 0;
+  while (i < text.length) {
+    let end = Math.min(text.length, i + maxLen);
+    if (end < text.length) {
+      const cut = text.lastIndexOf("\n\n", end);
+      if (cut > i + Math.floor(maxLen * 0.5)) end = cut + 2;
+      else {
+        const cut2 = text.lastIndexOf("\n", end);
+        if (cut2 > i + Math.floor(maxLen * 0.5)) end = cut2 + 1;
+      }
+    }
+    const chunk = text.slice(i, end).trimEnd();
+    if (chunk) parts.push(chunk);
+    i = end;
+  }
+  return parts.length ? parts : [text.slice(0, maxLen)];
+}
+
+/**
+ * @param {'ru'|'en'} lang
+ * @param {string} ymd
+ * @param {{ completedAtSec: number, answers: string[] }[]} items
+ * @param {string} tz
+ */
+function formatDayDetailText(lang, ymd, items, tz) {
+  const l = lang === "en" ? "en" : "ru";
+  const lines = [];
+  lines.push(`${uiText(l, "statsDayHeader")} ${ymd}`);
+  const sorted = [...items].sort((a, b) => a.completedAtSec - b.completedAtSec);
+  let p = 1;
+  for (const it of sorted) {
+    const { hm } = safeLocalParts(new Date(it.completedAtSec * 1000), tz);
+    lines.push(`\n${uiText(l, "statsPassAt")} ${p}/${sorted.length} — ${hm}\n`);
+    p++;
+    lines.push(it.answers.map((a, i) => `${i + 1}. ${a}`).join("\n"));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * @param {'ru'|'en'} lang
+ */
+function statsModeKeyboard(lang) {
+  const l = lang === "en" ? "en" : "ru";
+  return new InlineKeyboard()
+    .text(uiText(l, "statsByDays"), "st:md")
+    .text(uiText(l, "statsByWeeks"), "st:mw")
+    .row()
+    .text(uiText(l, "statsBackSettings"), "st:sb");
+}
+
+/**
+ * @param {'ru'|'en'} lang
+ * @param {number} yyyymm
+ * @param {string} tz
+ * @param {Map<string, { completedAtSec: number, answers: string[] }[]>} byYmd
+ */
+function statsCalendarKeyboard(lang, yyyymm, tz, byYmd) {
+  const l = lang === "en" ? "en" : "ru";
+  const y = Math.floor(yyyymm / 100);
+  const mo = yyyymm % 100;
+  const kb = new InlineKeyboard();
+  const monthTitle = new Intl.DateTimeFormat(l === "en" ? "en" : "ru", { month: "long", year: "numeric" }).format(
+    new Date(y, mo - 1, 1),
+  );
+  kb.text("‹", `st:mp:${yyyymm}`)
+    .text(monthTitle, `st:mo:${yyyymm}`)
+    .text("›", `st:mn:${yyyymm}`)
+    .row();
+  const wk = l === "en" ? ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] : ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+  for (const lab of wk) kb.text(lab, "st:h");
+  kb.row();
+  const firstDow = localWeekdayMon0FromUtcMs(instantForLocalDate(y, mo, 1, tz), tz);
+  let col = 0;
+  for (let i = 0; i < firstDow; i++) {
+    kb.text("·", "st:h");
+    col++;
+  }
+  const dim = daysInGregorianMonth(y, mo);
+  for (let day = 1; day <= dim; day++) {
+    const ymd = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const n = (byYmd.get(ymd) ?? []).length;
+    const tag = ymdToCompact8(ymd);
+    const label = n > 0 ? `${day}·` : `${day}`;
+    kb.text(label, `st:dy:${tag}`);
+    col++;
+    if (col % 7 === 0) kb.row();
+  }
+  if (col % 7 !== 0) kb.row();
+  kb.text(uiText(l, "statsBackModes"), "st:rm");
+  return kb;
+}
+
+/**
+ * @param {'ru'|'en'} lang
+ * @param {string} mondayYmd
+ * @param {string} tz
+ * @param {Map<string, { completedAtSec: number, answers: string[] }[]>} byYmd
+ */
+function statsWeekKeyboard(lang, mondayYmd, tz, byYmd) {
+  const l = lang === "en" ? "en" : "ru";
+  const mon = ymdToCompact8(mondayYmd);
+  const kb = new InlineKeyboard()
+    .text("‹", `st:wp:${mon}`)
+    .text("·", `st:wk:${mon}`)
+    .text("›", `st:wn:${mon}`)
+    .row();
+  for (let i = 0; i < 7; i++) {
+    const ymd = addLocalDays(mondayYmd, i, tz);
+    const n = (byYmd.get(ymd) ?? []).length;
+    const dom = Number(ymd.slice(-2));
+    const label = n > 0 ? `${dom}·` : `${dom}`;
+    kb.text(label, `st:dy:${ymdToCompact8(ymd)}`);
+  }
+  kb.row().text(uiText(l, "statsBackModes"), "st:rm");
+  return kb;
+}
+
+/**
+ * @param {'ru'|'en'} lang
+ * @param {string} mondayYmd
+ * @param {string} tz
+ * @param {Map<string, { completedAtSec: number, answers: string[] }[]>} byYmd
+ */
+function formatWeekSummaryText(lang, mondayYmd, tz, byYmd) {
+  const l = lang === "en" ? "en" : "ru";
+  const sun = addLocalDays(mondayYmd, 6, tz);
+  let total = 0;
+  for (let i = 0; i < 7; i++) {
+    const ymd = addLocalDays(mondayYmd, i, tz);
+    total += (byYmd.get(ymd) ?? []).length;
+  }
+  return (
+    `${uiText(l, "statsWeekHeader")}: ${mondayYmd} — ${sun}\n` +
+    `${uiText(l, "statsWeekCount")} ${total}\n\n` +
+    `${uiText(l, "statsWeekPickDay")}`
+  );
+}
+
+/**
+ * @param {'ru'|'en'} lang
+ * @param {string} ymd
+ * @param {string} tz
+ */
+function statsDayFooterKeyboard(lang, ymd, tz) {
+  const l = lang === "en" ? "en" : "ru";
+  const ymm = ymdToYmm(ymd);
+  const mon = ymdToCompact8(mondayYmdOfWeekContaining(ymd, tz));
+  return new InlineKeyboard()
+    .text(uiText(l, "statsBackCalendar"), `st:mo:${ymm}`)
+    .text(uiText(l, "statsBackWeek"), `st:wk:${mon}`)
+    .row()
+    .text(uiText(l, "statsBackModes"), "st:rm")
+    .text(uiText(l, "statsBackSettings"), "st:sb");
+}
+
+/**
+ * @param {import('grammy').Context} ctx
+ * @param {string} text
+ * @param {import('grammy').InlineKeyboard} kb
+ */
+async function editOrReplyMarkup(ctx, text, kb) {
+  const extra = { reply_markup: kb, disable_web_page_preview: true };
+  try {
+    if (ctx.callbackQuery?.message) {
+      await ctx.editMessageText(text, extra);
+      return;
+    }
+  } catch (_) {
+    /* fallback */
+  }
+  await ctx.reply(text, extra);
+}
+
+/**
+ * @param {import("@cloudflare/workers-types").D1Database} db
+ * @param {number} userId
+ */
+async function loadStatsBundle(db, userId) {
+  const profile = await getUserProfile(db, userId);
+  const lang = profile?.language === "en" ? "en" : "ru";
+  const tz = await getUserTimezone(db, userId);
+  const rows = await listSurveyResponsesForUser(db, userId);
+  const byYmd = bucketResponsesByLocalYmd(rows, tz);
+  return { lang, tz, byYmd, rows };
 }
 
 function startFollowUpSurvey(ctx) {
@@ -451,7 +822,6 @@ function createBot(env) {
 
     if (!profile) {
       await ctx.reply(uiText("ru", "onboardingLang"), { reply_markup: onboardingLangKeyboard() });
-      await ctx.reply("Настройки:", { reply_markup: reminderOpenKeyboard() });
       return;
     }
 
@@ -460,12 +830,14 @@ function createBot(env) {
       const already = await hasCompletedSurveyToday(ctx.db, uid, new Date());
       if (already) {
         await ctx.reply(uiText(profile.language, "alreadyToday") + "\n\n" + uiText(profile.language, "startSurveyHint"));
-        await ctx.reply("Настройки:", { reply_markup: reminderOpenKeyboard() });
+        const langSet = profile.language === "en" ? "en" : "ru";
+        await ctx.reply(uiText(langSet, "settingsHeader"), { reply_markup: settingsKeyboard(langSet) });
         return;
       }
     }
 
-    await ctx.reply("Настройки:", { reply_markup: reminderOpenKeyboard() });
+    const langStart = profile.language === "en" ? "en" : "ru";
+    await ctx.reply(uiText(langStart, "settingsHeader"), { reply_markup: settingsKeyboard(langStart) });
     await startFollowUpSurvey(ctx);
   });
 
@@ -511,6 +883,27 @@ function createBot(env) {
     const profile = uid ? await getUserProfile(ctx.db, uid) : null;
     const lang = profile?.language ?? ctx.session?.onboarding?.lang ?? "ru";
     await ctx.reply(uiText(lang, "cancelled"));
+  });
+
+  bot.command("stats", async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.reply(uiText("ru", "statsNoDb"));
+      return;
+    }
+    const profile = await getUserProfile(ctx.db, uid);
+    const lang = profile?.language === "en" ? "en" : "ru";
+    const { rows } = await loadStatsBundle(ctx.db, uid);
+    if (rows.length === 0) {
+      await ctx.reply(uiText(lang, "statsEmpty"), {
+        reply_markup: new InlineKeyboard().text(uiText(lang, "statsBackSettings"), "st:sb"),
+      });
+      return;
+    }
+    await ctx.reply(`${uiText(lang, "statsTitle")}\n\n${uiText(lang, "statsModeHint")}`, {
+      reply_markup: statsModeKeyboard(lang),
+    });
   });
 
   bot.command("reminder", async (ctx) => {
@@ -664,6 +1057,227 @@ function createBot(env) {
     await ctx.reply(uiText(s.onboarding.lang, "onboardingBirthYear"));
   });
 
+  bot.callbackQuery(/^st:h$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^st:o$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const { lang, rows } = await loadStatsBundle(ctx.db, uid);
+    await ctx.answerCallbackQuery();
+    if (rows.length === 0) {
+      const kb = new InlineKeyboard().text(uiText(lang, "statsBackSettings"), "st:sb");
+      await editOrReplyMarkup(ctx, uiText(lang, "statsEmpty"), kb);
+      return;
+    }
+    await editOrReplyMarkup(
+      ctx,
+      `${uiText(lang, "statsTitle")}\n\n${uiText(lang, "statsModeHint")}`,
+      statsModeKeyboard(lang),
+    );
+  });
+
+  bot.callbackQuery(/^st:sb$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    const profile = ctx.db ? await getUserProfile(ctx.db, uid) : null;
+    const lang = profile?.language === "en" ? "en" : "ru";
+    await ctx.answerCallbackQuery();
+    await editOrReplyMarkup(ctx, uiText(lang, "settingsHeader"), settingsKeyboard(lang));
+  });
+
+  bot.callbackQuery(/^st:rm$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const { lang, rows } = await loadStatsBundle(ctx.db, uid);
+    await ctx.answerCallbackQuery();
+    if (rows.length === 0) {
+      const kb = new InlineKeyboard().text(uiText(lang, "statsBackSettings"), "st:sb");
+      await editOrReplyMarkup(ctx, uiText(lang, "statsEmpty"), kb);
+      return;
+    }
+    await editOrReplyMarkup(
+      ctx,
+      `${uiText(lang, "statsTitle")}\n\n${uiText(lang, "statsModeHint")}`,
+      statsModeKeyboard(lang),
+    );
+  });
+
+  bot.callbackQuery(/^st:md$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const { lang, tz, byYmd } = await loadStatsBundle(ctx.db, uid);
+    await ctx.answerCallbackQuery();
+    const nowYmd = safeLocalParts(new Date(), tz).ymd;
+    const yyyymm = ymdToYmm(nowYmd);
+    const text = `${uiText(lang, "statsByDays")}\n\n${uiText(lang, "statsCalendarHint")}`;
+    await editOrReplyMarkup(ctx, text, statsCalendarKeyboard(lang, yyyymm, tz, byYmd));
+  });
+
+  bot.callbackQuery(/^st:mw$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const { lang, tz, byYmd } = await loadStatsBundle(ctx.db, uid);
+    await ctx.answerCallbackQuery();
+    const nowYmd = safeLocalParts(new Date(), tz).ymd;
+    const mon = mondayYmdOfWeekContaining(nowYmd, tz);
+    const text = formatWeekSummaryText(lang, mon, tz, byYmd);
+    await editOrReplyMarkup(ctx, text, statsWeekKeyboard(lang, mon, tz, byYmd));
+  });
+
+  bot.callbackQuery(/^st:mo:(\d{6})$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const yyyymm = parseInt(ctx.match[1], 10);
+    const { lang, tz, byYmd } = await loadStatsBundle(ctx.db, uid);
+    await ctx.answerCallbackQuery();
+    const text = `${uiText(lang, "statsByDays")}\n\n${uiText(lang, "statsCalendarHint")}`;
+    await editOrReplyMarkup(ctx, text, statsCalendarKeyboard(lang, yyyymm, tz, byYmd));
+  });
+
+  bot.callbackQuery(/^st:mp:(\d{6})$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const cur = parseInt(ctx.match[1], 10);
+    const yyyymm = shiftMonthYmm(cur, -1);
+    const { lang, tz, byYmd } = await loadStatsBundle(ctx.db, uid);
+    await ctx.answerCallbackQuery();
+    const text = `${uiText(lang, "statsByDays")}\n\n${uiText(lang, "statsCalendarHint")}`;
+    await editOrReplyMarkup(ctx, text, statsCalendarKeyboard(lang, yyyymm, tz, byYmd));
+  });
+
+  bot.callbackQuery(/^st:mn:(\d{6})$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const cur = parseInt(ctx.match[1], 10);
+    const yyyymm = shiftMonthYmm(cur, 1);
+    const { lang, tz, byYmd } = await loadStatsBundle(ctx.db, uid);
+    await ctx.answerCallbackQuery();
+    const text = `${uiText(lang, "statsByDays")}\n\n${uiText(lang, "statsCalendarHint")}`;
+    await editOrReplyMarkup(ctx, text, statsCalendarKeyboard(lang, yyyymm, tz, byYmd));
+  });
+
+  bot.callbackQuery(/^st:wk:(\d{8})$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const monYmd = compact8ToYmd(ctx.match[1]);
+    if (!monYmd) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    const { lang, tz, byYmd } = await loadStatsBundle(ctx.db, uid);
+    await ctx.answerCallbackQuery();
+    const text = formatWeekSummaryText(lang, monYmd, tz, byYmd);
+    await editOrReplyMarkup(ctx, text, statsWeekKeyboard(lang, monYmd, tz, byYmd));
+  });
+
+  bot.callbackQuery(/^st:wp:(\d{8})$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const monYmd = compact8ToYmd(ctx.match[1]);
+    if (!monYmd) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    const { lang, tz, byYmd } = await loadStatsBundle(ctx.db, uid);
+    const prevMon = addLocalDays(monYmd, -7, tz);
+    await ctx.answerCallbackQuery();
+    const text = formatWeekSummaryText(lang, prevMon, tz, byYmd);
+    await editOrReplyMarkup(ctx, text, statsWeekKeyboard(lang, prevMon, tz, byYmd));
+  });
+
+  bot.callbackQuery(/^st:wn:(\d{8})$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const monYmd = compact8ToYmd(ctx.match[1]);
+    if (!monYmd) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    const { lang, tz, byYmd } = await loadStatsBundle(ctx.db, uid);
+    const nextMon = addLocalDays(monYmd, 7, tz);
+    await ctx.answerCallbackQuery();
+    const text = formatWeekSummaryText(lang, nextMon, tz, byYmd);
+    await editOrReplyMarkup(ctx, text, statsWeekKeyboard(lang, nextMon, tz, byYmd));
+  });
+
+  bot.callbackQuery(/^st:dy:(\d{8})$/, async (ctx) => {
+    const uid = ctx.from?.id;
+    if (!uid) return;
+    if (!ctx.db) {
+      await ctx.answerCallbackQuery({ text: uiText("ru", "statsNoDb") });
+      return;
+    }
+    const ymd = compact8ToYmd(ctx.match[1]);
+    if (!ymd) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    const { lang, tz, byYmd } = await loadStatsBundle(ctx.db, uid);
+    const items = byYmd.get(ymd) ?? [];
+    if (items.length === 0) {
+      await ctx.answerCallbackQuery({ text: uiText(lang, "statsNoDayEntries") });
+      return;
+    }
+    const body = formatDayDetailText(lang, ymd, items, tz);
+    const kb = statsDayFooterKeyboard(lang, ymd, tz);
+    const chunks = splitTextChunks(body, 3800);
+    await ctx.answerCallbackQuery();
+    try {
+      if (ctx.callbackQuery?.message) {
+        await ctx.editMessageText(chunks[0], { reply_markup: kb, disable_web_page_preview: true });
+      } else {
+        await ctx.reply(chunks[0], { reply_markup: kb, disable_web_page_preview: true });
+      }
+    } catch (_) {
+      await ctx.reply(chunks[0], { reply_markup: kb, disable_web_page_preview: true });
+    }
+    for (let i = 1; i < chunks.length; i++) {
+      await ctx.reply(chunks[i], { disable_web_page_preview: true });
+    }
+  });
+
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;
     if (text.startsWith("/")) return;
@@ -693,6 +1307,7 @@ function createBot(env) {
         gender: s.onboarding.gender === "f" ? "f" : "m",
         birth_year: String(s.onboarding.birthYear ?? ""),
       });
+      const reminderLang = s.onboarding.lang === "en" ? "en" : "ru";
       // После сохранения профиля переходим к опросу (с учётом ограничения “1 раз в день”)
       s.phase = "idle";
       delete s.onboardingStep;
@@ -705,6 +1320,9 @@ function createBot(env) {
         await ctx.reply(uiText(profile?.language ?? "ru", "alreadyToday"));
         return;
       }
+      await ctx.reply(uiText(reminderLang, "onboardingReminder"), {
+        reply_markup: settingsKeyboard(reminderLang === "en" ? "en" : "ru"),
+      });
       await startFollowUpSurvey(ctx);
       return;
     }
@@ -945,6 +1563,7 @@ export default {
         await cachedBot.api.setMyCommands([
           { command: "start", description: "Начать" },
           { command: "survey", description: "Пройти опрос (9 вопросов)" },
+          { command: "stats", description: "Статистика ответов" },
           { command: "reminder", description: "Напоминания" },
           { command: "cancel", description: "Отмена" },
         ]);
