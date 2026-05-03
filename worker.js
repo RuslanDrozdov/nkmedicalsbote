@@ -836,8 +836,6 @@ function createBot(env) {
       }
     }
 
-    const langStart = profile.language === "en" ? "en" : "ru";
-    await ctx.reply(uiText(langStart, "settingsHeader"), { reply_markup: settingsKeyboard(langStart) });
     await startFollowUpSurvey(ctx);
   });
 
@@ -1307,7 +1305,6 @@ function createBot(env) {
         gender: s.onboarding.gender === "f" ? "f" : "m",
         birth_year: String(s.onboarding.birthYear ?? ""),
       });
-      const reminderLang = s.onboarding.lang === "en" ? "en" : "ru";
       // После сохранения профиля переходим к опросу (с учётом ограничения “1 раз в день”)
       s.phase = "idle";
       delete s.onboardingStep;
@@ -1320,9 +1317,6 @@ function createBot(env) {
         await ctx.reply(uiText(profile?.language ?? "ru", "alreadyToday"));
         return;
       }
-      await ctx.reply(uiText(reminderLang, "onboardingReminder"), {
-        reply_markup: settingsKeyboard(reminderLang === "en" ? "en" : "ru"),
-      });
       await startFollowUpSurvey(ctx);
       return;
     }
