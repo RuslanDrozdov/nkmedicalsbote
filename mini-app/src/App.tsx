@@ -33,12 +33,14 @@ const copy: Record<
     | "alreadyTitle"
     | "alreadyBody"
     | "empty"
-    | "surveyTitle",
+    | "surveyTitle"
+    | "loading",
     string
   >
 > = {
   ru: {
     needTelegram: "Откройте это приложение из Telegram.",
+    loading: "Загрузка…",
     loadError: "Не удалось загрузить данные.",
     langTitle: "Выберите язык",
     genderTitle: "Выберите пол",
@@ -57,6 +59,7 @@ const copy: Record<
   },
   en: {
     needTelegram: "Open this app from Telegram.",
+    loading: "Loading…",
     loadError: "Failed to load data.",
     langTitle: "Choose language",
     genderTitle: "Select gender",
@@ -90,7 +93,14 @@ export default function App() {
   useEffect(() => {
     WebApp.ready();
     WebApp.expand();
-    const hasInit = Boolean(WebApp.initData?.length);
+    // initData приходит из hash страницы; после ready() иногда стабильнее на следующем тике
+    const raw =
+      typeof WebApp.initData === "string" && WebApp.initData.length > 0
+        ? WebApp.initData
+        : typeof window.Telegram?.WebApp?.initData === "string"
+          ? window.Telegram.WebApp.initData
+          : "";
+    const hasInit = raw.length > 0;
     setInitOk(hasInit);
     if (!hasInit) return;
 
@@ -171,7 +181,9 @@ export default function App() {
   if (initOk === null || (initOk && !me && !err)) {
     return (
       <div className="layout">
-        <p>…</p>
+        <p className="loading" aria-busy="true">
+          {t("loading")}
+        </p>
       </div>
     );
   }

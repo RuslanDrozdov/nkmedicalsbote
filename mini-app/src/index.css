@@ -69,3 +69,9 @@ input[type="text"] {
   color: var(--tg-theme-destructive-text-color, #c00);
   font-size: 0.9rem;
 }
+
+.loading {
+  font-size: 1rem;
+  color: var(--tg-theme-hint-color, #666);
+  margin-top: 8px;
+}
