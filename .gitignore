@@ -1,5 +1,6 @@
 node_modules/
 mini-app/node_modules/
+mini-app/package-lock.json
 mini-app/dist/
 .env
 .dev.vars

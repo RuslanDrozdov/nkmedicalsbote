@@ -1,16 +1,19 @@
 {
   "name": "telegram-survey-bot",
   "version": "1.0.0",
+  "private": true,
   "description": "Telegram bot: 2 screening questions, then 9 questions; optional Cloudflare Workers + D1",
   "main": "bot.js",
   "type": "module",
+  "workspaces": [
+    "mini-app"
+  ],
   "scripts": {
     "start": "node bot.js",
     "dev:worker": "wrangler dev",
-    "postinstall": "npm install --prefix mini-app --include=dev",
     "build": "node scripts/ensure-mini-app-dist.mjs",
     "build:mini-app": "node scripts/ensure-mini-app-dist.mjs",
-    "deploy": "npm run build:mini-app && wrangler deploy",
+    "deploy": "node scripts/ensure-mini-app-dist.mjs && wrangler deploy",
     "db:init:local": "wrangler d1 execute telegram_bot_db --local --file=./schema.sql",
     "db:init:remote": "wrangler d1 execute telegram_bot_db --remote --file=./schema.sql",
     "webhook:set": "node scripts/set-webhook.mjs"
