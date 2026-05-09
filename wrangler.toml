@@ -2,9 +2,9 @@ name = "nkmedicalsbote"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
-# Перед `wrangler dev` / `wrangler deploy` создаётся `mini-app/dist` (нужно для Workers Builds и локального deploy без ручной сборки).
+# Перед `wrangler dev` / `wrangler deploy` создаётся `mini-app/dist`. Скрипт при необходимости делает `npm ci` в `mini-app` (например CI с --ignore-scripts).
 [build]
-command = "npm run build:mini-app"
+command = "node scripts/ensure-mini-app-dist.mjs"
 watch_dir = "mini-app/src"
 
 # Статика React Mini App (сборка: npm run build:mini-app). Worker обрабатывает запрос первым
@@ -43,7 +43,7 @@ crons = ["* * * * *"]
 #    wrangler secret put MINI_APP_URL  → https://<worker>.workers.dev/app/
 #    Опционально: wrangler secret put WEBHOOK_SECRET (случайная строка; тот же в setWebhook)
 # 2) Схема D1 (удалённо): npm run db:init:remote
-# 3) Деплой: npm run deploy (или npx wrangler deploy — секция [build] соберёт mini-app). В Workers Builds задайте Build command: npm run build
+# 3) Деплой: npm run deploy. В Cloudflare Workers → Settings → Builds: Deploy command = npm run deploy (или Build command = npm run build, Deploy = npx wrangler deploy)
 # 4) Webhook: WEBHOOK_URL=https://<worker>/webhook npm run webhook:set
 # Локально: .dev.vars (BOT_TOKEN, опц. WEBHOOK_SECRET), затем npm run db:init:local
 # Точка входа Worker: worker.js (в корне рядом с wrangler.toml — так надёжнее для CI)

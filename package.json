@@ -7,10 +7,10 @@
   "scripts": {
     "start": "node bot.js",
     "dev:worker": "wrangler dev",
-    "postinstall": "npm install --prefix mini-app",
-    "build": "npm run build:mini-app",
-    "build:mini-app": "npm run build --prefix mini-app",
-    "deploy": "wrangler deploy",
+    "postinstall": "npm install --prefix mini-app --include=dev",
+    "build": "node scripts/ensure-mini-app-dist.mjs",
+    "build:mini-app": "node scripts/ensure-mini-app-dist.mjs",
+    "deploy": "npm run build:mini-app && wrangler deploy",
     "db:init:local": "wrangler d1 execute telegram_bot_db --local --file=./schema.sql",
     "db:init:remote": "wrangler d1 execute telegram_bot_db --remote --file=./schema.sql",
     "webhook:set": "node scripts/set-webhook.mjs"
