@@ -1,0 +1,71 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--tg-theme-bg-color, #fff);
+  color: var(--tg-theme-text-color, #111);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 10px;
+  padding: 12px 16px;
+  border: none;
+  background: var(--tg-theme-button-color, #2481cc);
+  color: var(--tg-theme-button-text-color, #fff);
+}
+
+button.secondary {
+  background: var(--tg-theme-secondary-bg-color, #e8e8e8);
+  color: var(--tg-theme-text-color, #111);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.layout {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+h1 {
+  font-size: 1.25rem;
+  margin: 0 0 12px;
+}
+
+p {
+  line-height: 1.45;
+  margin: 0 0 12px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--tg-theme-hint-color, #999);
+  background: var(--tg-theme-secondary-bg-color, #f4f4f4);
+  color: inherit;
+  font: inherit;
+}
+
+.error {
+  color: var(--tg-theme-destructive-text-color, #c00);
+  font-size: 0.9rem;
+}
