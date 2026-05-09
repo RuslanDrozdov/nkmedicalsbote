@@ -147,6 +147,25 @@ function jsonResponse(body, status = 200) {
 }
 
 /**
+ * Vite для мини-приложения задаёт `base: "/app/"`, поэтому в браузере открывают `…/app/`,
+ * а `mini-app/dist` содержит файлы в корне каталога: `index.html`, `assets/…`.
+ * У биндинга `ASSETS` путь URL сопоставляется с путём внутри `dist` без префикса `/app`,
+ * из‑за чего запросы вида `/app/` и `/app/assets/…` иначе дают 404. Переписываем их в `/` и `/assets/…`.
+ *
+ * @param {Request} request
+ * @param {string} path — `url.pathname` без завершающего `/` (как в этом `fetch`)
+ */
+function requestForStaticAssets(request, path) {
+  if (path !== "/app" && !path.startsWith("/app/")) {
+    return request;
+  }
+  const u = new URL(request.url);
+  const inner = path === "/app" ? "/" : path.slice("/app".length);
+  u.pathname = inner.length ? inner : "/";
+  return new Request(u.toString(), request);
+}
+
+/**
  * Извлекает и валидирует `user_id` из заголовка `X-Telegram-Init-Data`.
  *
  * @param {Request} request
@@ -1978,7 +1997,7 @@ export default {
     const method = request.method;
     if ((method === "GET" || method === "HEAD") && env.ASSETS && path !== "/webhook") {
       try {
-        return await env.ASSETS.fetch(request);
+        return await env.ASSETS.fetch(requestForStaticAssets(request, path));
       } catch (e) {
         console.error("ASSETS.fetch:", e);
       }
