@@ -2,6 +2,11 @@ name = "nkmedicalsbote"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
+# Перед `wrangler dev` / `wrangler deploy` создаётся `mini-app/dist` (нужно для Workers Builds и локального deploy без ручной сборки).
+[build]
+command = "npm run build:mini-app"
+watch_dir = "mini-app/src"
+
 # Статика React Mini App (сборка: npm run build:mini-app). Worker обрабатывает запрос первым
 # (`run_worker_first`), затем для /api/* и /webhook отвечает сам; остальное — ASSETS.
 [assets]
@@ -38,7 +43,7 @@ crons = ["* * * * *"]
 #    wrangler secret put MINI_APP_URL  → https://<worker>.workers.dev/app/
 #    Опционально: wrangler secret put WEBHOOK_SECRET (случайная строка; тот же в setWebhook)
 # 2) Схема D1 (удалённо): npm run db:init:remote
-# 3) Деплой: npm run deploy
+# 3) Деплой: npm run deploy (или npx wrangler deploy — секция [build] соберёт mini-app). В Workers Builds задайте Build command: npm run build
 # 4) Webhook: WEBHOOK_URL=https://<worker>/webhook npm run webhook:set
 # Локально: .dev.vars (BOT_TOKEN, опц. WEBHOOK_SECRET), затем npm run db:init:local
 # Точка входа Worker: worker.js (в корне рядом с wrangler.toml — так надёжнее для CI)
