@@ -165,10 +165,13 @@ export default function App() {
   if (phase === "home" && me) {
     return (
       <HomeScreen
+        title={t(lang, "homeTitle")}
         onSurvey={startSurveyPath}
         onSettings={() => setPhase("settings")}
         surveyLabel={t(lang, "homeSurveyZone")}
-        settingsLabel={t(lang, "homeSettingsZone")}
+        settingsLine1={t(lang, "homeSettingsZoneLine1")}
+        settingsLine2={t(lang, "homeSettingsZoneLine2")}
+        settingsAriaLabel={`${t(lang, "homeSettingsZoneLine1")}, ${t(lang, "homeSettingsZoneLine2")}`}
       />
     );
   }

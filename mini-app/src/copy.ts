@@ -49,8 +49,10 @@ export const copy: Record<
     | "statsCalendarHint"
     | "statsWeekPickDay"
     | "statsNoDayEntries"
+    | "homeTitle"
     | "homeSurveyZone"
-    | "homeSettingsZone"
+    | "homeSettingsZoneLine1"
+    | "homeSettingsZoneLine2"
     | "invalidTime",
     string
   >
@@ -102,8 +104,10 @@ export const copy: Record<
     statsCalendarHint: "Точка — есть ответы в этот день. Выберите день.",
     statsWeekPickDay: "Нажмите день недели для подробностей.",
     statsNoDayEntries: "Нет записей",
+    homeTitle: "Неврология головного мозга",
     homeSurveyZone: "Опрос",
-    homeSettingsZone: "Настройки и статистика",
+    homeSettingsZoneLine1: "Настройки",
+    homeSettingsZoneLine2: "Статистика",
     invalidTime: "Формат времени: HH:MM",
   },
   en: {
@@ -153,8 +157,10 @@ export const copy: Record<
     statsCalendarHint: "Dot = answers that day. Pick a day.",
     statsWeekPickDay: "Tap a day below for details.",
     statsNoDayEntries: "No entries",
+    homeTitle: "Neurology of the brain",
     homeSurveyZone: "Survey",
-    homeSettingsZone: "Settings and statistics",
+    homeSettingsZoneLine1: "Settings",
+    homeSettingsZoneLine2: "Statistics",
     invalidTime: "Time format: HH:MM",
   },
 };
