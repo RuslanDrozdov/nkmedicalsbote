@@ -2,8 +2,15 @@ import { useEffect, useState } from "react";
 import WebApp from "@twa-dev/sdk";
 import { FOLLOW_UP_QUESTIONS } from "@constants";
 import { apiGet, apiPost } from "./api";
-
-type Lang = "ru" | "en";
+import type { Lang } from "./copy";
+import { t } from "./copy";
+import HomeScreen from "./screens/HomeScreen";
+import OnboardingScreen from "./screens/OnboardingScreen";
+import RemindersScreen from "./screens/RemindersScreen";
+import SettingsScreen from "./screens/SettingsScreen";
+import StatsScreen from "./screens/StatsScreen";
+import SurveyScreen from "./screens/SurveyScreen";
+import ScreenShell from "./components/ScreenShell";
 
 type MeResponse = {
   ok: boolean;
@@ -15,68 +22,15 @@ type MeResponse = {
   alreadyToday: boolean;
 };
 
-const copy: Record<
-  Lang,
-  Record<
-    | "needTelegram"
-    | "loadError"
-    | "langTitle"
-    | "genderTitle"
-    | "yearTitle"
-    | "yearPlaceholder"
-    | "next"
-    | "submit"
-    | "male"
-    | "female"
-    | "doneTitle"
-    | "doneBody"
-    | "alreadyTitle"
-    | "alreadyBody"
-    | "empty"
-    | "surveyTitle"
-    | "loading",
-    string
-  >
-> = {
-  ru: {
-    needTelegram: "Откройте это приложение из Telegram.",
-    loading: "Загрузка…",
-    loadError: "Не удалось загрузить данные.",
-    langTitle: "Выберите язык",
-    genderTitle: "Выберите пол",
-    yearTitle: "Год рождения",
-    yearPlaceholder: "Например, 1990",
-    next: "Далее",
-    submit: "Отправить",
-    male: "Мужской",
-    female: "Женский",
-    doneTitle: "Готово",
-    doneBody: "Спасибо! Вы ответили на все вопросы.",
-    alreadyTitle: "Уже сегодня",
-    alreadyBody: "Сегодня вы уже проходили опрос. Приходите завтра.",
-    empty: "Введите непустой ответ.",
-    surveyTitle: "Вопрос",
-  },
-  en: {
-    needTelegram: "Open this app from Telegram.",
-    loading: "Loading…",
-    loadError: "Failed to load data.",
-    langTitle: "Choose language",
-    genderTitle: "Select gender",
-    yearTitle: "Birth year",
-    yearPlaceholder: "e.g. 1990",
-    next: "Next",
-    submit: "Submit",
-    male: "Male",
-    female: "Female",
-    doneTitle: "Done",
-    doneBody: "Thanks! You answered all questions.",
-    alreadyTitle: "Already today",
-    alreadyBody: "You have already completed the survey today. Please come back tomorrow.",
-    empty: "Please enter a non-empty answer.",
-    surveyTitle: "Question",
-  },
-};
+type Phase =
+  | "home"
+  | "onb"
+  | "survey"
+  | "done"
+  | "blocked"
+  | "settings"
+  | "reminders"
+  | "stats";
 
 export default function App() {
   const [initOk, setInitOk] = useState<boolean | null>(null);
@@ -88,12 +42,11 @@ export default function App() {
   const [qIndex, setQIndex] = useState(0);
   const [answers, setAnswers] = useState<string[]>([]);
   const [answerDraft, setAnswerDraft] = useState("");
-  const [phase, setPhase] = useState<"onb" | "survey" | "done" | "blocked">("onb");
+  const [phase, setPhase] = useState<Phase>("home");
 
   useEffect(() => {
     WebApp.ready();
     WebApp.expand();
-    // initData приходит из hash страницы; после ready() иногда стабильнее на следующем тике
     const raw =
       typeof WebApp.initData === "string" && WebApp.initData.length > 0
         ? WebApp.initData
@@ -112,26 +65,37 @@ export default function App() {
           setGender((m.profile.gender === "f" ? "f" : "m") as "m" | "f");
           setBirthYear(m.profile.birth_year ?? "");
         }
-        if (m.alreadyToday) {
-          setPhase("blocked");
-          return;
-        }
-        if (m.profile) {
-          setPhase("survey");
-        } else {
-          setPhase("onb");
-        }
+        setPhase("home");
       })
-      .catch((e: Error) => setErr(e.message ?? copy.ru.loadError));
+      .catch((e: Error) => setErr(e.message ?? t("ru", "loadError")));
   }, []);
 
-  const t = (key: keyof (typeof copy)["ru"]) => copy[lang][key];
+  function goHome() {
+    setErr(null);
+    setPhase("home");
+  }
+
+  function startSurveyPath() {
+    if (!me) return;
+    if (me.alreadyToday) {
+      setPhase("blocked");
+      return;
+    }
+    if (!me.profile) {
+      setPhase("onb");
+      return;
+    }
+    setQIndex(0);
+    setAnswers([]);
+    setAnswerDraft("");
+    setPhase("survey");
+  }
 
   async function saveProfileAndStartSurvey() {
     if (!gender) return;
     const y = birthYear.trim();
     if (!y) {
-      setErr(t("empty"));
+      setErr(t(lang, "empty"));
       return;
     }
     setErr(null);
@@ -155,13 +119,15 @@ export default function App() {
   async function submitAnswer() {
     const trimmed = answerDraft.trim();
     if (!trimmed) {
-      setErr(t("empty"));
+      setErr(t(lang, "empty"));
       return;
     }
     setErr(null);
     const next = [...answers, trimmed];
     if (next.length >= FOLLOW_UP_QUESTIONS.length) {
       await apiPost("/api/survey/complete", { answers: next });
+      const m = await apiGet<MeResponse>("/api/me");
+      setMe(m);
       setPhase("done");
       return;
     }
@@ -173,7 +139,7 @@ export default function App() {
   if (initOk === false) {
     return (
       <div className="layout">
-        <p className="error">{t("needTelegram")}</p>
+        <p className="error">{t(lang, "needTelegram")}</p>
       </div>
     );
   }
@@ -182,7 +148,7 @@ export default function App() {
     return (
       <div className="layout">
         <p className="loading" aria-busy="true">
-          {t("loading")}
+          {t(lang, "loading")}
         </p>
       </div>
     );
@@ -196,85 +162,87 @@ export default function App() {
     );
   }
 
+  if (phase === "home" && me) {
+    return (
+      <HomeScreen
+        onSurvey={startSurveyPath}
+        onSettings={() => setPhase("settings")}
+        surveyLabel={t(lang, "homeSurveyZone")}
+        settingsLabel={t(lang, "homeSettingsZone")}
+      />
+    );
+  }
+
   if (phase === "blocked" && me) {
     return (
-      <div className="layout">
-        <h1>{t("alreadyTitle")}</h1>
-        <p>{t("alreadyBody")}</p>
-      </div>
+      <ScreenShell lang={lang} onBackHome={goHome}>
+        <h1>{t(lang, "alreadyTitle")}</h1>
+        <p>{t(lang, "alreadyBody")}</p>
+      </ScreenShell>
     );
   }
 
   if (phase === "done") {
     return (
-      <div className="layout">
-        <h1>{t("doneTitle")}</h1>
-        <p>{t("doneBody")}</p>
-      </div>
+      <ScreenShell lang={lang} onBackHome={goHome}>
+        <h1>{t(lang, "doneTitle")}</h1>
+        <p>{t(lang, "doneBody")}</p>
+      </ScreenShell>
     );
   }
 
   if (phase === "onb" && !me?.profile) {
     return (
-      <div className="layout">
-        <h1>{t("langTitle")}</h1>
-        <div className="row">
-          <button type="button" className={lang === "ru" ? "" : "secondary"} onClick={() => setLang("ru")}>
-            Русский
-          </button>
-          <button type="button" className={lang === "en" ? "" : "secondary"} onClick={() => setLang("en")}>
-            English
-          </button>
-        </div>
-        <h1>{t("genderTitle")}</h1>
-        <div className="row">
-          <button type="button" className={gender === "m" ? "" : "secondary"} onClick={() => setGender("m")}>
-            {t("male")}
-          </button>
-          <button type="button" className={gender === "f" ? "" : "secondary"} onClick={() => setGender("f")}>
-            {t("female")}
-          </button>
-        </div>
-        <h1>{t("yearTitle")}</h1>
-        <input
-          type="text"
-          value={birthYear}
-          onChange={(e) => setBirthYear(e.target.value)}
-          placeholder={t("yearPlaceholder")}
-          inputMode="numeric"
-        />
-        {err ? <p className="error">{err}</p> : null}
-        <div className="row" style={{ marginTop: 16 }}>
-          <button type="button" disabled={!gender} onClick={() => void saveProfileAndStartSurvey()}>
-            {t("next")}
-          </button>
-        </div>
-      </div>
+      <OnboardingScreen
+        lang={lang}
+        gender={gender}
+        birthYear={birthYear}
+        err={err}
+        onLang={setLang}
+        onGender={setGender}
+        onBirthYear={setBirthYear}
+        onSubmit={() => void saveProfileAndStartSurvey()}
+        onBackHome={goHome}
+      />
     );
   }
 
   if (phase === "survey") {
-    const q = FOLLOW_UP_QUESTIONS[qIndex];
     return (
-      <div className="layout">
-        <h1>
-          {t("surveyTitle")} {qIndex + 1}/{FOLLOW_UP_QUESTIONS.length}
-        </h1>
-        <p>{q}</p>
-        <input type="text" value={answerDraft} onChange={(e) => setAnswerDraft(e.target.value)} />
-        {err ? <p className="error">{err}</p> : null}
-        <div className="row" style={{ marginTop: 16 }}>
-          <button type="button" onClick={() => void submitAnswer()}>
-            {qIndex + 1 >= FOLLOW_UP_QUESTIONS.length ? t("submit") : t("next")}
-          </button>
-        </div>
-      </div>
+      <SurveyScreen
+        lang={lang}
+        qIndex={qIndex}
+        answerDraft={answerDraft}
+        err={err}
+        onDraft={setAnswerDraft}
+        onSubmit={() => void submitAnswer()}
+        onBackHome={goHome}
+      />
     );
+  }
+
+  if (phase === "settings") {
+    return (
+      <SettingsScreen
+        lang={lang}
+        onReminders={() => setPhase("reminders")}
+        onStats={() => setPhase("stats")}
+        onBackHome={goHome}
+      />
+    );
+  }
+
+  if (phase === "reminders") {
+    return <RemindersScreen lang={lang} onBack={() => setPhase("settings")} />;
+  }
+
+  if (phase === "stats") {
+    return <StatsScreen lang={lang} onBackSettings={() => setPhase("settings")} />;
   }
 
   return (
     <div className="layout">
-      <p className="error">{err ?? t("loadError")}</p>
+      <p className="error">{err ?? t(lang, "loadError")}</p>
     </div>
   );
 }

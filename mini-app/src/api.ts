@@ -85,3 +85,75 @@ export async function apiPost<T>(path: string, json: unknown): Promise<T> {
   }
   return body as T;
 }
+
+export async function apiPatch<T>(path: string, json: unknown): Promise<T> {
+  let r: Response;
+  try {
+    r = await fetchWithTimeout(
+      path,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Telegram-Init-Data": initDataHeader(),
+        },
+        body: JSON.stringify(json),
+      },
+      FETCH_TIMEOUT_MS,
+    );
+  } catch (e: unknown) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error("Request timed out");
+    }
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+  const text = await r.text();
+  let body: unknown = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = { raw: text };
+  }
+  if (!r.ok) {
+    const err = body as { error?: string };
+    throw new Error(err?.error ?? `HTTP ${r.status}`);
+  }
+  return body as T;
+}
+
+export async function downloadStatsExport(): Promise<void> {
+  let r: Response;
+  try {
+    r = await fetchWithTimeout(
+      "/api/stats/export",
+      { headers: { "X-Telegram-Init-Data": initDataHeader() } },
+      FETCH_TIMEOUT_MS,
+    );
+  } catch (e: unknown) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error("Request timed out");
+    }
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+  if (!r.ok) {
+    const text = await r.text();
+    let err = `HTTP ${r.status}`;
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j.error) err = j.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(err);
+  }
+  const blob = await r.blob();
+  const cd = r.headers.get("Content-Disposition") ?? "";
+  const m = /filename="?([^";]+)"?/.exec(cd);
+  const filename = m?.[1] ?? "survey_export.csv";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

@@ -1832,7 +1832,7 @@ const RECENT_UPDATE_IDS_MAX = 5000;
 const recentUpdateIds = new Map();
 
 /**
- * HTTP Mini App API: `GET /api/me`, `POST /api/profile`, `POST /api/survey/complete`.
+ * HTTP Mini App API: profile, survey, reminders, stats (see handleMiniAppApi).
  *
  * @param {Request} request
  * @param {{ BOT_TOKEN?: string, DB?: import("@cloudflare/workers-types").D1Database }} env
@@ -1910,6 +1910,98 @@ async function handleMiniAppApi(request, env, path) {
     return jsonResponse({ ok: true });
   }
 
+  if (path === "/api/reminders" && request.method === "GET") {
+    const row = await ensureReminderRow(env.DB, userId);
+    return jsonResponse({
+      ok: true,
+      timezone: String(row?.timezone ?? "UTC"),
+      time_hhmm: String(row?.time_hhmm ?? "09:00"),
+      enabled: Number(row?.enabled ?? 0) === 1,
+    });
+  }
+
+  if (path === "/api/reminders" && request.method === "PATCH") {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid_json" }, 400);
+    }
+    await ensureReminderRow(env.DB, userId);
+    /** @type {Partial<{timezone:string,time_hhmm:string,enabled:number,last_sent_local_date:string|null}>} */
+    const patch = {};
+    if (typeof body?.enabled === "boolean") {
+      patch.enabled = body.enabled ? 1 : 0;
+    }
+    if (typeof body?.time_hhmm === "string") {
+      const t = body.time_hhmm.trim();
+      if (!REMINDER_TIME_RE.test(t)) return jsonResponse({ error: "invalid_time" }, 400);
+      patch.time_hhmm = t;
+    }
+    if (typeof body?.timezone === "string") {
+      const tz = body.timezone.trim();
+      if (!isValidTimeZone(tz)) return jsonResponse({ error: "invalid_timezone" }, 400);
+      patch.timezone = tz;
+      patch.last_sent_local_date = null;
+    }
+    if (Object.keys(patch).length === 0) return jsonResponse({ error: "empty_patch" }, 400);
+    await updateReminderRow(env.DB, userId, patch);
+    const row = await ensureReminderRow(env.DB, userId);
+    return jsonResponse({
+      ok: true,
+      timezone: String(row?.timezone ?? "UTC"),
+      time_hhmm: String(row?.time_hhmm ?? "09:00"),
+      enabled: Number(row?.enabled ?? 0) === 1,
+    });
+  }
+
+  if (path === "/api/reminders/test" && request.method === "POST") {
+    const profile = await getUserProfile(env.DB, userId);
+    const lang = profile?.language === "en" ? "en" : "ru";
+    const ok = await sendTelegramMessage(
+      env,
+      userId,
+      lang === "en"
+        ? "Test survey reminder.\n\nPlease open the mini app to take the survey."
+        : "Тестовое приглашение на опрос.\n\nОткройте мини-приложение, чтобы пройти опрос.",
+    );
+    return jsonResponse({ ok: true, sent: ok });
+  }
+
+  if (path === "/api/stats" && request.method === "GET") {
+    const { lang, tz, byYmd, rows } = await loadStatsBundle(env.DB, userId);
+    /** @type {Record<string, { completedAtSec: number, answers: string[] }[]>} */
+    const serialized = {};
+    for (const [ymd, items] of byYmd.entries()) {
+      serialized[ymd] = items;
+    }
+    return jsonResponse({
+      ok: true,
+      timezone: tz,
+      language: lang,
+      byYmd: serialized,
+      totalCount: rows.length,
+    });
+  }
+
+  if (path === "/api/stats/export" && request.method === "GET") {
+    const profile = await getUserProfile(env.DB, userId);
+    const lang = profile?.language === "en" ? "en" : "ru";
+    const tz = await getUserTimezone(env.DB, userId);
+    const rows = await listSurveyResponsesForUser(env.DB, userId);
+    if (rows.length === 0) return jsonResponse({ error: "stats_empty" }, 404);
+    const bytes = buildSurveyExportCsvBytes(rows, tz, lang);
+    const ymdCompact = safeLocalParts(new Date(), tz).ymd.replace(/-/g, "");
+    const filename = `survey_export_${ymdCompact}.csv`;
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": `attachment; filename="${filename}"`,
+      },
+    });
+  }
+
   return jsonResponse({ error: "not_found" }, 404);
 }
 
@@ -1946,7 +2038,12 @@ export default {
             health: "/health",
             webhook_post: "/webhook",
             mini_app: "/app/",
-            api: "/api/me",
+            api_me: "/api/me",
+            api_profile: "/api/profile",
+            api_survey_complete: "/api/survey/complete",
+            api_reminders: "/api/reminders",
+            api_stats: "/api/stats",
+            api_stats_export: "/api/stats/export",
           },
         }),
         {
