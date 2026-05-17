@@ -81,22 +81,8 @@ button:disabled {
   stroke-width: 2.5;
   pointer-events: fill;
   cursor: pointer;
-  transition:
-    stroke 0.15s ease,
-    filter 0.15s ease;
   outline: none;
-}
-
-.home-lobe--survey:hover,
-.home-lobe--survey:focus-visible {
-  stroke: #00d4ff;
-  filter: drop-shadow(0 0 6px rgba(0, 212, 255, 0.55));
-}
-
-.home-lobe--settings:hover,
-.home-lobe--settings:focus-visible {
-  stroke: #ff5252;
-  filter: drop-shadow(0 0 6px rgba(255, 82, 82, 0.55));
+  -webkit-tap-highlight-color: transparent;
 }
 
 .home-labels {
