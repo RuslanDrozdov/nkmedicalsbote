@@ -66,28 +66,49 @@ button:disabled {
   pointer-events: none;
 }
 
-.home-zones {
-  display: flex;
+.home-map {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   width: 100%;
   height: 100%;
+  pointer-events: none;
 }
 
-.home-zone {
-  position: relative;
-  display: flex;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: 10% 8px 0;
-  margin: 0;
-  border: none;
-  background: transparent;
-  border-radius: 0;
+.home-lobe {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 2.5;
+  pointer-events: fill;
   cursor: pointer;
+  transition:
+    stroke 0.15s ease,
+    filter 0.15s ease;
+  outline: none;
 }
 
-.home-zone-label {
+.home-lobe--survey:hover,
+.home-lobe--survey:focus-visible {
+  stroke: #00d4ff;
+  filter: drop-shadow(0 0 6px rgba(0, 212, 255, 0.55));
+}
+
+.home-lobe--settings:hover,
+.home-lobe--settings:focus-visible {
+  stroke: #ff5252;
+  filter: drop-shadow(0 0 6px rgba(255, 82, 82, 0.55));
+}
+
+.home-labels {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.home-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
   font-size: 1.1rem;
   font-weight: 600;
   line-height: 1.2;
@@ -96,27 +117,15 @@ button:disabled {
   pointer-events: none;
 }
 
-.home-zone-label--survey {
+.home-label--survey {
   color: #00d4ff;
 }
 
-.home-zone-label--settings {
+.home-label--settings {
   display: flex;
   flex-direction: column;
   gap: 2px;
   color: #ff5252;
-}
-
-.home-zone--left:hover,
-.home-zone--left:focus-visible {
-  background: rgba(0, 212, 255, 0.08);
-  outline: none;
-}
-
-.home-zone--right:hover,
-.home-zone--right:focus-visible {
-  background: rgba(255, 82, 82, 0.1);
-  outline: none;
 }
 
 .panel {
