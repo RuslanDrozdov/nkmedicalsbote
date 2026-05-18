@@ -4,20 +4,24 @@ type Props = {
   title: string;
   onSurvey: () => void;
   onSettings: () => void;
+  onStats: () => void;
   surveyLabel: string;
-  settingsLine1: string;
-  settingsLine2: string;
+  settingsLabel: string;
+  statsLabel: string;
   settingsAriaLabel: string;
+  statsAriaLabel: string;
 };
 
 export default function HomeScreen({
   title,
   onSurvey,
   onSettings,
+  onStats,
   surveyLabel,
-  settingsLine1,
-  settingsLine2,
+  settingsLabel,
+  statsLabel,
   settingsAriaLabel,
+  statsAriaLabel,
 }: Props) {
   return (
     <div className="home">
@@ -25,15 +29,15 @@ export default function HomeScreen({
       <KnowledgeGardenScene
         onSurvey={onSurvey}
         onSettings={onSettings}
+        onStats={onStats}
         surveyAriaLabel={surveyLabel}
         settingsAriaLabel={settingsAriaLabel}
+        statsAriaLabel={statsAriaLabel}
+        settingsLabel={settingsLabel}
+        statsLabel={statsLabel}
       />
       <div className="home-labels">
         <span className="home-label home-label--survey">{surveyLabel}</span>
-        <span className="home-label home-label--settings">
-          <span>{settingsLine1}</span>
-          <span>{settingsLine2}</span>
-        </span>
       </div>
     </div>
   );

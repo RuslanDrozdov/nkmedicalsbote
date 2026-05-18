@@ -18,8 +18,12 @@ const BOKEH = [
 type Props = {
   onSurvey: () => void;
   onSettings: () => void;
+  onStats: () => void;
   surveyAriaLabel: string;
   settingsAriaLabel: string;
+  statsAriaLabel: string;
+  settingsLabel: string;
+  statsLabel: string;
 };
 
 function activateOnKey(e: KeyboardEvent, action: () => void) {
@@ -74,8 +78,12 @@ function Leaf({ cx, cy, scale, flip }: { cx: number; cy: number; scale: number; 
 export default function KnowledgeGardenScene({
   onSurvey,
   onSettings,
+  onStats,
   surveyAriaLabel,
   settingsAriaLabel,
+  statsAriaLabel,
+  settingsLabel,
+  statsLabel,
 }: Props) {
   const { width, height } = SCENE_VIEWBOX;
 
@@ -187,6 +195,22 @@ export default function KnowledgeGardenScene({
           })}
           {/* Gutter glow */}
           <ellipse cx="200" cy="600" rx="28" ry="70" fill="url(#bookGlow)" className="home-glow-pulse" />
+          <text
+            x={138}
+            y={615}
+            textAnchor="middle"
+            className="home-book-label home-book-label--left"
+          >
+            {settingsLabel}
+          </text>
+          <text
+            x={262}
+            y={615}
+            textAnchor="middle"
+            className="home-book-label home-book-label--right"
+          >
+            {statsLabel}
+          </text>
         </g>
 
         {/* Plant */}
@@ -291,18 +315,26 @@ export default function KnowledgeGardenScene({
           onKeyDown={(e) => activateOnKey(e, onSurvey)}
         />
 
-        {/* Hit: book (settings) */}
+        {/* Hit: book left page (settings) */}
         <path
           className="home-hit home-hit--settings"
-          d="M 55 565
-             L 345 565
-             L 350 685
-             L 50 685 Z"
+          d="M 55 565 L 200 548 L 200 662 L 50 685 Z"
           role="button"
           tabIndex={0}
           aria-label={settingsAriaLabel}
           onClick={onSettings}
           onKeyDown={(e) => activateOnKey(e, onSettings)}
+        />
+
+        {/* Hit: book right page (stats) */}
+        <path
+          className="home-hit home-hit--stats"
+          d="M 200 548 L 345 565 L 350 685 L 200 662 Z"
+          role="button"
+          tabIndex={0}
+          aria-label={statsAriaLabel}
+          onClick={onStats}
+          onKeyDown={(e) => activateOnKey(e, onStats)}
         />
       </svg>
     </div>

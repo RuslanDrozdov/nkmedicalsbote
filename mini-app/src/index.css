@@ -129,9 +129,25 @@ button:disabled {
   stroke: rgba(0, 212, 255, 0.65);
 }
 
-.home-hit--settings:focus-visible {
+.home-hit--settings:focus-visible,
+.home-hit--stats:focus-visible {
   stroke: rgba(255, 82, 82, 0.65);
   fill: rgba(255, 82, 82, 0.06);
+}
+
+.home-book-label {
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: none;
+  user-select: none;
+}
+
+.home-book-label--left {
+  fill: #1a3050;
+}
+
+.home-book-label--right {
+  fill: #c62828;
 }
 
 @keyframes homeGlowPulse {
@@ -170,15 +186,6 @@ button:disabled {
   left: 50%;
   top: 22%;
   color: #00d4ff;
-}
-
-.home-label--settings {
-  left: 50%;
-  top: 88%;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  color: #ff5252;
 }
 
 .panel {

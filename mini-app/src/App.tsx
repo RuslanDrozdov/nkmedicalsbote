@@ -168,10 +168,12 @@ export default function App() {
         title={t(lang, "homeTitle")}
         onSurvey={startSurveyPath}
         onSettings={() => setPhase("settings")}
+        onStats={() => setPhase("stats")}
         surveyLabel={t(lang, "homeSurveyZone")}
-        settingsLine1={t(lang, "homeSettingsZoneLine1")}
-        settingsLine2={t(lang, "homeSettingsZoneLine2")}
-        settingsAriaLabel={`${t(lang, "homeSettingsZoneLine1")}, ${t(lang, "homeSettingsZoneLine2")}`}
+        settingsLabel={t(lang, "homeSettingsZoneLine1")}
+        statsLabel={t(lang, "homeSettingsZoneLine2")}
+        settingsAriaLabel={t(lang, "homeSettingsZoneLine1")}
+        statsAriaLabel={t(lang, "homeSettingsZoneLine2")}
       />
     );
   }
