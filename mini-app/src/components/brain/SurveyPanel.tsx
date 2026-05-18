@@ -41,9 +41,9 @@ export default function SurveyPanel({
 }: Props) {
   if (phase === "home") {
     return (
-      <section className="brain-panel brain-panel--left">
+      <section className="brain-panel brain-panel--left brain-panel--survey-home">
         <h2 className="brain-panel-title">{t(lang, "homeSurveyZone")}</h2>
-        <button type="button" className="brain-btn brain-btn--teal" onClick={onStartSurvey}>
+        <button type="button" className="brain-btn brain-btn--teal brain-btn--block" onClick={onStartSurvey}>
           {t(lang, "homeStartSurvey")}
         </button>
       </section>
