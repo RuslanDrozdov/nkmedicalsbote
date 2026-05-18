@@ -4,13 +4,8 @@ import { FOLLOW_UP_QUESTIONS } from "@constants";
 import { apiGet, apiPost } from "./api";
 import type { Lang } from "./copy";
 import { t } from "./copy";
-import HomeScreen from "./screens/HomeScreen";
-import OnboardingScreen from "./screens/OnboardingScreen";
-import RemindersScreen from "./screens/RemindersScreen";
-import SettingsScreen from "./screens/SettingsScreen";
-import StatsScreen from "./screens/StatsScreen";
-import SurveyScreen from "./screens/SurveyScreen";
-import ScreenShell from "./components/ScreenShell";
+import type { SurveyPhase } from "./components/brain/SurveyPanel";
+import BrainSplitScreen from "./screens/BrainSplitScreen";
 
 type MeResponse = {
   ok: boolean;
@@ -22,15 +17,15 @@ type MeResponse = {
   alreadyToday: boolean;
 };
 
-type Phase =
-  | "home"
-  | "onb"
-  | "survey"
-  | "done"
-  | "blocked"
-  | "settings"
-  | "reminders"
-  | "stats";
+type Phase = "home" | "onb" | "survey" | "done" | "blocked" | "reminders";
+
+function toSurveyPhase(phase: Phase): SurveyPhase {
+  if (phase === "onb") return "onb";
+  if (phase === "survey") return "survey";
+  if (phase === "done") return "done";
+  if (phase === "blocked") return "blocked";
+  return "home";
+}
 
 export default function App() {
   const [initOk, setInitOk] = useState<boolean | null>(null);
@@ -162,87 +157,30 @@ export default function App() {
     );
   }
 
-  if (phase === "home" && me) {
+  if (me) {
     return (
-      <HomeScreen
+      <BrainSplitScreen
         title={t(lang, "homeTitle")}
-        onSurvey={startSurveyPath}
-        onSettings={() => setPhase("settings")}
-        onStats={() => setPhase("stats")}
-        surveyLabel={t(lang, "homeSurveyZone")}
-        settingsLabel={t(lang, "homeSettingsZoneLine1")}
-        statsLabel={t(lang, "homeSettingsZoneLine2")}
-        settingsAriaLabel={t(lang, "homeSettingsZoneLine1")}
-        statsAriaLabel={t(lang, "homeSettingsZoneLine2")}
-      />
-    );
-  }
-
-  if (phase === "blocked" && me) {
-    return (
-      <ScreenShell lang={lang} onBackHome={goHome}>
-        <h1>{t(lang, "alreadyTitle")}</h1>
-        <p>{t(lang, "alreadyBody")}</p>
-      </ScreenShell>
-    );
-  }
-
-  if (phase === "done") {
-    return (
-      <ScreenShell lang={lang} onBackHome={goHome}>
-        <h1>{t(lang, "doneTitle")}</h1>
-        <p>{t(lang, "doneBody")}</p>
-      </ScreenShell>
-    );
-  }
-
-  if (phase === "onb" && !me?.profile) {
-    return (
-      <OnboardingScreen
         lang={lang}
+        surveyPhase={toSurveyPhase(phase)}
+        qIndex={qIndex}
+        answerDraft={answerDraft}
         gender={gender}
         birthYear={birthYear}
         err={err}
+        showReminders={phase === "reminders"}
+        onStartSurvey={startSurveyPath}
         onLang={setLang}
         onGender={setGender}
         onBirthYear={setBirthYear}
-        onSubmit={() => void saveProfileAndStartSurvey()}
-        onBackHome={goHome}
-      />
-    );
-  }
-
-  if (phase === "survey") {
-    return (
-      <SurveyScreen
-        lang={lang}
-        qIndex={qIndex}
-        answerDraft={answerDraft}
-        err={err}
         onDraft={setAnswerDraft}
-        onSubmit={() => void submitAnswer()}
-        onBackHome={goHome}
+        onSubmitOnboarding={() => void saveProfileAndStartSurvey()}
+        onSubmitAnswer={() => void submitAnswer()}
+        onResetHome={goHome}
+        onOpenReminders={() => setPhase("reminders")}
+        onBackFromReminders={() => setPhase("home")}
       />
     );
-  }
-
-  if (phase === "settings") {
-    return (
-      <SettingsScreen
-        lang={lang}
-        onReminders={() => setPhase("reminders")}
-        onStats={() => setPhase("stats")}
-        onBackHome={goHome}
-      />
-    );
-  }
-
-  if (phase === "reminders") {
-    return <RemindersScreen lang={lang} onBack={() => setPhase("settings")} />;
-  }
-
-  if (phase === "stats") {
-    return <StatsScreen lang={lang} onBackSettings={() => setPhase("settings")} />;
   }
 
   return (

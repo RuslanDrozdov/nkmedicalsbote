@@ -53,6 +53,7 @@ export const copy: Record<
     | "homeSurveyZone"
     | "homeSettingsZoneLine1"
     | "homeSettingsZoneLine2"
+    | "homeStartSurvey"
     | "invalidTime",
     string
   >
@@ -108,6 +109,7 @@ export const copy: Record<
     homeSurveyZone: "Опрос",
     homeSettingsZoneLine1: "Настройки",
     homeSettingsZoneLine2: "Статистика",
+    homeStartSurvey: "Начать опрос",
     invalidTime: "Формат времени: HH:MM",
   },
   en: {
@@ -161,6 +163,7 @@ export const copy: Record<
     homeSurveyZone: "Survey",
     homeSettingsZoneLine1: "Settings",
     homeSettingsZoneLine2: "Statistics",
+    homeStartSurvey: "Start survey",
     invalidTime: "Time format: HH:MM",
   },
 };
