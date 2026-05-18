@@ -63,73 +63,19 @@ button:disabled {
 }
 
 .brain-hero {
-  position: relative;
   width: 100%;
-  max-width: 480px;
+  max-width: 560px;
   margin: 0 auto;
-  aspect-ratio: 16 / 10;
-  min-height: 160px;
-  max-height: 220px;
+  padding: 0 8px 8px;
+  line-height: 0;
 }
 
-.brain-hero-bg {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 50%;
-  pointer-events: none;
-}
-
-.brain-hero-bg--left {
-  left: 0;
-  background: linear-gradient(135deg, #f0f8f9 0%, #e0f0f2 100%);
-}
-
-.brain-hero-bg--right {
-  right: 0;
-  background: linear-gradient(225deg, #fff5f5 0%, #ffe8e8 100%);
-}
-
-.brain-hero-svg {
-  position: relative;
-  z-index: 2;
-  width: 100%;
-  height: 100%;
+.brain-hero-img {
   display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
 }
-
-.brain-deco {
-  position: absolute;
-  z-index: 1;
-  opacity: 0.85;
-  pointer-events: none;
-}
-
-.brain-deco-text {
-  font-size: 0.7rem;
-  font-weight: 700;
-  font-family: Georgia, "Times New Roman", serif;
-}
-
-.brain-deco-text--pi {
-  font-size: 0.55rem;
-}
-
-.brain-deco--l1 { left: 8%; top: 8%; }
-.brain-deco--l2 { left: 18%; top: 28%; }
-.brain-deco--l3 { left: 4%; top: 42%; }
-.brain-deco--l4 { left: 22%; top: 52%; }
-.brain-deco--l5 { left: 6%; top: 62%; }
-.brain-deco--l6 { left: 20%; top: 72%; }
-.brain-deco--l7 { left: 10%; bottom: 6%; }
-
-.brain-deco--r1 { right: 42%; top: 4%; left: auto; }
-.brain-deco--r2 { right: 12%; top: 18%; left: auto; }
-.brain-deco--r3 { right: 8%; top: 38%; left: auto; }
-.brain-deco--r4 { right: 20%; top: 52%; left: auto; }
-.brain-deco--r5 { right: 6%; top: 62%; left: auto; }
-.brain-deco--r6 { right: 18%; bottom: 18%; left: auto; }
-.brain-deco--r7 { right: 8%; bottom: 6%; left: auto; }
 
 .brain-split-panels {
   display: flex;
