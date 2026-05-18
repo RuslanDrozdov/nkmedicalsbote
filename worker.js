@@ -366,21 +366,25 @@ function isValidTimeZone(tz) {
  * Нужен в Cron (`scheduled`): там нет контекста бота и нельзя тянуть тяжёлый стек.
  * Возвращает boolean успеха; тело ошибки логируется в консоль Worker.
  *
- * @param {{BOT_TOKEN:string}} env
+ * @param {{BOT_TOKEN:string, MINI_APP_URL?: string}} env
  * @param {number} chatId — обычно совпадает с `user_id` в D1 для личных чатов
  * @param {string} text — plain text, без parse_mode
+ * @param {object} [replyMarkup] — inline-клавиатура Bot API (например кнопка Web App)
  */
-async function sendTelegramMessage(env, chatId, text) {
+async function sendTelegramMessage(env, chatId, text, replyMarkup) {
   const token = env?.BOT_TOKEN ? String(env.BOT_TOKEN).trim() : "";
   if (!token) return false;
+  /** @type {Record<string, unknown>} */
+  const payload = {
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: true,
+  };
+  if (replyMarkup) payload.reply_markup = replyMarkup;
   const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      disable_web_page_preview: true,
-    }),
+    body: JSON.stringify(payload),
   });
   if (resp.ok) return true;
   try {
@@ -390,6 +394,41 @@ async function sendTelegramMessage(env, chatId, text) {
     console.error("sendMessage failed:", resp.status, e);
   }
   return false;
+}
+
+/** @param {{ MINI_APP_URL?: string }} env */
+function getMiniAppUrl(env) {
+  return typeof env?.MINI_APP_URL === "string" ? env.MINI_APP_URL.trim() : "";
+}
+
+/**
+ * Inline-кнопка «Открыть приложение» для напоминаний (Cron / тест без grammY).
+ *
+ * @param {'ru'|'en'} lang
+ * @param {string} miniUrl
+ */
+function miniAppReplyMarkup(lang, miniUrl) {
+  if (!miniUrl) return undefined;
+  return {
+    inline_keyboard: [[{ text: uiText(lang, "openMiniAppBtn"), web_app: { url: miniUrl } }]],
+  };
+}
+
+/**
+ * @param {{ BOT_TOKEN: string, MINI_APP_URL?: string }} env
+ * @param {number} chatId
+ * @param {'ru'|'en'} lang
+ * @param {string} textKey — ключ в `uiText` (`surveyReminder`, `surveyReminderTest`, …)
+ * @param {Record<string, string>} [vars] — подстановки в текст, напр. `{time}`
+ */
+async function sendSurveyReminderMessage(env, chatId, lang, textKey, vars = {}) {
+  let text = uiText(lang, textKey);
+  for (const [k, v] of Object.entries(vars)) {
+    text = text.replace(`{${k}}`, v);
+  }
+  const miniUrl = getMiniAppUrl(env);
+  if (!miniUrl) text += `\n\n${uiText(lang, "miniAppUrlMissing")}`;
+  return sendTelegramMessage(env, chatId, text, miniAppReplyMarkup(lang, miniUrl));
 }
 
 /**
@@ -547,6 +586,14 @@ function uiText(lang, key) {
     miniAppUrlMissing: {
       ru: "Адрес мини-приложения не настроен (секрет MINI_APP_URL). Обратитесь к администратору.",
       en: "Mini App URL is not configured (MINI_APP_URL secret). Please contact the administrator.",
+    },
+    surveyReminder: {
+      ru: "Пора пройти опрос ({time}).\n\nОткройте мини-приложение, чтобы пройти опрос.",
+      en: "Time for your survey ({time}).\n\nOpen the mini app to take the survey.",
+    },
+    surveyReminderTest: {
+      ru: "Тестовое приглашение на опрос.\n\nОткройте мини-приложение, чтобы пройти опрос.",
+      en: "Test survey reminder.\n\nPlease open the mini app to take the survey.",
     },
   };
   return (m[key] ?? m.needStart)[l];
@@ -1386,11 +1433,9 @@ function createBot(env) {
     }
 
     if (action === "test") {
-      const ok = await sendTelegramMessage(
-        env,
-        uid,
-        "Тестовое приглашение на опрос.\n\nПожалуйста, пройдите опрос — отправьте /start",
-      );
+      const profile = await getUserProfile(ctx.db, uid);
+      const lang = profile?.language === "en" ? "en" : "ru";
+      const ok = await sendSurveyReminderMessage(env, uid, lang, "surveyReminderTest");
       await ctx.answerCallbackQuery({ text: ok ? "Отправлено" : "Не удалось отправить" });
       return;
     }
@@ -1958,13 +2003,7 @@ async function handleMiniAppApi(request, env, path) {
   if (path === "/api/reminders/test" && request.method === "POST") {
     const profile = await getUserProfile(env.DB, userId);
     const lang = profile?.language === "en" ? "en" : "ru";
-    const ok = await sendTelegramMessage(
-      env,
-      userId,
-      lang === "en"
-        ? "Test survey reminder.\n\nPlease open the mini app to take the survey."
-        : "Тестовое приглашение на опрос.\n\nОткройте мини-приложение, чтобы пройти опрос.",
-    );
+    const ok = await sendSurveyReminderMessage(env, userId, lang, "surveyReminderTest");
     return jsonResponse({ ok: true, sent: ok });
   }
 
@@ -2217,7 +2256,7 @@ export default {
    * через `sendTelegramMessage` и фиксируем дату отправки в БД.
    *
    * @param {ScheduledEvent} _event — cron-расписание задаётся в wrangler.toml (здесь не используется)
-   * @param {{ BOT_TOKEN: string, DB: import("@cloudflare/workers-types").D1Database }} env
+   * @param {{ BOT_TOKEN: string, DB: import("@cloudflare/workers-types").D1Database, MINI_APP_URL?: string }} env
    */
   async scheduled(_event, env) {
     if (!env?.DB) return;
@@ -2250,11 +2289,11 @@ export default {
       const already = await hasCompletedSurveyToday(env.DB, uid, now);
       if (already) continue;
 
-      const ok = await sendTelegramMessage(
-        env,
-        uid,
-        `Пора пройти опрос (${desired} ${tz}).\n\nПожалуйста, начните опрос — отправьте /survey\n\nНастройки времени: /reminder`,
-      );
+      const profile = await getUserProfile(env.DB, uid);
+      const lang = profile?.language === "en" ? "en" : "ru";
+      const ok = await sendSurveyReminderMessage(env, uid, lang, "surveyReminder", {
+        time: `${desired} ${tz}`,
+      });
       console.log("scheduled invite:", { uid, tz, desired, ok });
       if (!ok) continue;
 
