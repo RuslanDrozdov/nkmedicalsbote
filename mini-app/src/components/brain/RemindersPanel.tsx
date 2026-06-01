@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPatch, apiPost } from "../../api";
 import { TIMEZONE_OPTIONS, type Lang, t } from "../../copy";
+import BrainBackButton from "./BrainBackButton";
 
 const TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
@@ -84,9 +85,7 @@ export default function RemindersPanel({ lang, onBack }: Props) {
 
   return (
     <div className="brain-reminders">
-      <button type="button" className="brain-back-link" onClick={onBack}>
-        {t(lang, "statsBackSettings")}
-      </button>
+      <BrainBackButton lang={lang} labelKey="statsBackSettings" onClick={onBack} />
       <h2 className="brain-panel-title">{t(lang, "remindersBtn")}</h2>
       <p>{data?.enabled ? t(lang, "reminderEnabled") : t(lang, "reminderDisabled")}</p>
       <div className="row">

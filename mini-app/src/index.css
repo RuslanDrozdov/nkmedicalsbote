@@ -268,18 +268,46 @@ button:disabled {
   font: inherit;
 }
 
-.brain-back-link {
-  display: inline-block;
+.brain-back-btn {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
   margin-bottom: 12px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: inherit;
+  padding: 10px 16px;
+  border-radius: 10px;
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
+  font-weight: 600;
   cursor: pointer;
-  text-decoration: underline;
-  opacity: 0.85;
+  text-align: center;
+}
+
+.brain-back-btn::before {
+  content: "← ";
+}
+
+.brain-panel--left .brain-back-btn {
+  background: rgba(0, 139, 155, 0.12);
+  border: 1px solid rgba(0, 139, 155, 0.45);
+  color: #0a2a30;
+}
+
+.brain-panel--right .brain-back-btn {
+  background: rgba(163, 22, 22, 0.1);
+  border: 1px solid rgba(163, 22, 22, 0.45);
+  color: #3a1010;
+}
+
+.brain-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.brain-actions .brain-btn--block {
+  width: 100%;
 }
 
 .brain-panel--left .error {

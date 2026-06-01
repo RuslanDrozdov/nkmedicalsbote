@@ -22,8 +22,8 @@ export default function RightPanel({ lang, showReminders, onOpenReminders, onBac
   return (
     <section className="brain-panel brain-panel--right brain-panel-scroll">
       <h2 className="brain-panel-title">{t(lang, "homeSettingsZoneLine1")}</h2>
-      <div className="row stack">
-        <button type="button" className="brain-btn brain-btn--red" onClick={onOpenReminders}>
+      <div className="brain-actions">
+        <button type="button" className="brain-btn brain-btn--red brain-btn--block" onClick={onOpenReminders}>
           {t(lang, "remindersBtn")}
         </button>
       </div>

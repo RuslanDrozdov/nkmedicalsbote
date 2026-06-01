@@ -1,6 +1,7 @@
 import { FOLLOW_UP_QUESTIONS } from "@constants";
 import type { Lang } from "../../copy";
 import { t } from "../../copy";
+import BrainBackButton from "./BrainBackButton";
 
 export type SurveyPhase = "home" | "onb" | "survey" | "done" | "blocked";
 
@@ -53,11 +54,9 @@ export default function SurveyPanel({
   if (phase === "blocked") {
     return (
       <section className="brain-panel brain-panel--left">
+        <BrainBackButton lang={lang} labelKey="backHome" onClick={onResetHome} />
         <h2 className="brain-panel-title">{t(lang, "alreadyTitle")}</h2>
         <p>{t(lang, "alreadyBody")}</p>
-        <button type="button" className="brain-btn brain-btn--teal secondary" onClick={onResetHome}>
-          {t(lang, "backHome")}
-        </button>
       </section>
     );
   }
@@ -65,11 +64,9 @@ export default function SurveyPanel({
   if (phase === "done") {
     return (
       <section className="brain-panel brain-panel--left">
+        <BrainBackButton lang={lang} labelKey="backHome" onClick={onResetHome} />
         <h2 className="brain-panel-title">{t(lang, "doneTitle")}</h2>
         <p>{t(lang, "doneBody")}</p>
-        <button type="button" className="brain-btn brain-btn--teal secondary" onClick={onResetHome}>
-          {t(lang, "backHome")}
-        </button>
       </section>
     );
   }
@@ -77,6 +74,7 @@ export default function SurveyPanel({
   if (phase === "onb") {
     return (
       <section className="brain-panel brain-panel--left">
+        <BrainBackButton lang={lang} labelKey="backHome" onClick={onResetHome} />
         <h2 className="brain-panel-title">{t(lang, "langTitle")}</h2>
         <div className="row">
           <button type="button" className={lang === "ru" ? "brain-btn brain-btn--teal" : "brain-btn secondary"} onClick={() => onLang("ru")}>
@@ -117,18 +115,16 @@ export default function SurveyPanel({
   const q = FOLLOW_UP_QUESTIONS[qIndex];
   return (
     <section className="brain-panel brain-panel--left">
+      <BrainBackButton lang={lang} labelKey="backHome" onClick={onResetHome} />
       <h2 className="brain-panel-title">
         {t(lang, "surveyTitle")} {qIndex + 1}/{FOLLOW_UP_QUESTIONS.length}
       </h2>
       <p className="brain-question">{q}</p>
       <input type="text" className="brain-input" value={answerDraft} onChange={(e) => onDraft(e.target.value)} />
       {err ? <p className="error">{err}</p> : null}
-      <div className="row" style={{ marginTop: 16 }}>
-        <button type="button" className="brain-btn brain-btn--teal" onClick={onSubmitAnswer}>
+      <div className="brain-actions" style={{ marginTop: 16 }}>
+        <button type="button" className="brain-btn brain-btn--teal brain-btn--block" onClick={onSubmitAnswer}>
           {qIndex + 1 >= FOLLOW_UP_QUESTIONS.length ? t(lang, "submit") : t(lang, "next")}
-        </button>
-        <button type="button" className="brain-btn secondary" onClick={onResetHome}>
-          {t(lang, "backHome")}
         </button>
       </div>
     </section>

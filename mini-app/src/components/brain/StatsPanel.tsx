@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { apiGet, downloadStatsExport } from "../../api";
 import type { Lang } from "../../copy";
 import { t } from "../../copy";
+import BrainBackButton from "./BrainBackButton";
 import {
   WEEKDAY_LABELS,
   addLocalDays,
@@ -89,14 +90,14 @@ export default function StatsPanel({ lang }: Props) {
     return (
       <div>
         <p>{t(uiLang, "statsModeHint")}</p>
-        <div className="row stack">
-          <button type="button" className="brain-btn brain-btn--red" onClick={() => setView("calendar")}>
+        <div className="brain-actions">
+          <button type="button" className="brain-btn brain-btn--red brain-btn--block" onClick={() => setView("calendar")}>
             {t(uiLang, "statsByDays")}
           </button>
-          <button type="button" className="brain-btn brain-btn--red" onClick={() => setView("week")}>
+          <button type="button" className="brain-btn brain-btn--red brain-btn--block" onClick={() => setView("week")}>
             {t(uiLang, "statsByWeeks")}
           </button>
-          <button type="button" className="brain-btn secondary" disabled={exportBusy} onClick={() => void exportCsv()}>
+          <button type="button" className="brain-btn secondary brain-btn--block" disabled={exportBusy} onClick={() => void exportCsv()}>
             {t(uiLang, "statsExportBtn")}
           </button>
         </div>
@@ -120,9 +121,7 @@ export default function StatsPanel({ lang }: Props) {
 
     return (
       <div>
-        <button type="button" className="brain-back-link" onClick={() => setView("modes")}>
-          {t(uiLang, "statsBackModes")}
-        </button>
+        <BrainBackButton lang={uiLang} labelKey="statsBackModes" onClick={() => setView("modes")} />
         <h3 className="brain-panel-subtitle">{monthTitle(uiLang, monthYmm)}</h3>
         <p className="hint">{t(uiLang, "statsCalendarHint")}</p>
         <div className="cal-nav row">
@@ -173,9 +172,7 @@ export default function StatsPanel({ lang }: Props) {
     }
     return (
       <div>
-        <button type="button" className="brain-back-link" onClick={() => setView("modes")}>
-          {t(uiLang, "statsBackModes")}
-        </button>
+        <BrainBackButton lang={uiLang} labelKey="statsBackModes" onClick={() => setView("modes")} />
         <h3 className="brain-panel-subtitle">{t(uiLang, "statsWeekHeader")}</h3>
         <p>
           {weekMonday} — {sun}
@@ -216,13 +213,11 @@ export default function StatsPanel({ lang }: Props) {
     const items = [...(byYmd[selectedYmd] ?? [])].sort((a, b) => a.completedAtSec - b.completedAtSec);
     return (
       <div>
-        <button
-          type="button"
-          className="brain-back-link"
+        <BrainBackButton
+          lang={uiLang}
+          labelKey={fromWeek ? "statsBackWeek" : "statsBackCalendar"}
           onClick={() => (fromWeek ? setView("week") : setView("calendar"))}
-        >
-          {t(uiLang, fromWeek ? "statsBackWeek" : "statsBackCalendar")}
-        </button>
+        />
         <h3 className="brain-panel-subtitle">
           {t(uiLang, "statsDayHeader")} {selectedYmd}
         </h3>
@@ -241,11 +236,6 @@ export default function StatsPanel({ lang }: Props) {
             );
           })
         )}
-        <div className="row" style={{ marginTop: 12 }}>
-          <button type="button" className="brain-btn secondary" onClick={() => setView("modes")}>
-            {t(uiLang, "statsBackModes")}
-          </button>
-        </div>
       </div>
     );
   }
